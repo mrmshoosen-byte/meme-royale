@@ -1,49 +1,13 @@
 'use client';
 
+// ─── ROUND CONTROL ───────────────────────────────────────────────
+// Set to true to start the round countdown. Redeploy to activate.
+const ROUND_ACTIVE = false;
+// ─────────────────────────────────────────────────────────────────
+
 import { useEffect, useRef, useState } from 'react';
 
-const BASE58_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const PREVIOUS_WINNERS = [
-  { season: 4, winner: '3mNx...7Yw2', jackpot: '14,000 $MRYL' },
-  { season: 3, winner: 'Kp8Z...1Qa4', jackpot: '19,000 $MRYL' },
-  { season: 2, winner: '9fBv...6Rt3', jackpot: '22,000 $MRYL' },
-  { season: 1, winner: '2sLd...8Xm5', jackpot: '17,000 $MRYL' },
-  { season: 0, winner: '7wCj...4Hk9', jackpot: '25,000 $MRYL' },
-];
-
-const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-
-const getLivesFromHoldings = (holdings) => {
-  if (holdings >= 50000) return 3;
-  if (holdings >= 25000) return 2;
-  if (holdings >= 10000) return 1;
-  return 0;
-};
-
-const generateAddress = () =>
-  Array.from({ length: 44 }, () => BASE58_CHARS[Math.floor(Math.random() * BASE58_CHARS.length)]).join('');
-
 const shortenWallet = (wallet) => `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
-
-const generateWallets = () => {
-  const wallets = Array.from({ length: 20 }, (_, index) => {
-    const holdings = randomInt(10000, 120000);
-    const lives = getLivesFromHoldings(holdings);
-    return {
-      id: index + 1,
-      wallet: generateAddress(),
-      holdings,
-      lives,
-      status: lives > 0 ? 'alive' : 'eliminated',
-      rank: 0,
-    };
-  });
-
-  const ranked = [...wallets].sort((a, b) => b.holdings - a.holdings);
-  const rankMap = new Map(ranked.map((wallet, idx) => [wallet.id, idx + 1]));
-
-  return wallets.map((wallet) => ({ ...wallet, rank: rankMap.get(wallet.id) ?? 0 }));
-};
 
 const formatCountdown = (totalSeconds) => {
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
@@ -52,7 +16,7 @@ const formatCountdown = (totalSeconds) => {
 };
 
 export default function Home() {
-  const [wallets, setWallets] = useState(() => generateWallets());
+  const [wallets, setWallets] = useState([]);
   const [phase, setPhase] = useState('waiting');
   const [eliminationMessage, setEliminationMessage] = useState(null);
   const [winner, setWinner] = useState(null);
@@ -63,10 +27,9 @@ export default function Home() {
   const countdownRef = useRef(3600);
   const countdownTimerRef = useRef(null);
   const simulationRef = useRef(null);
-  const originalWalletsRef = useRef(null);
   // Always holds the latest wallets value so simulation useEffect can read it
   // without listing wallets as a dependency (which would re-trigger the animation).
-  const walletsRef = useRef(wallets);
+  const walletsRef = useRef([]);
 
   const survivors = wallets.filter((w) => w.status === 'alive').length;
   const jackpot = (wallets.length * 1000).toLocaleString();
@@ -75,6 +38,15 @@ export default function Home() {
   useEffect(() => {
     walletsRef.current = wallets;
   }, [wallets]);
+
+  // On mount: if ROUND_ACTIVE, automatically start the round countdown
+  useEffect(() => {
+    if (ROUND_ACTIVE) {
+      countdownRef.current = 3600;
+      setCountdown(formatCountdown(countdownRef.current));
+      setPhase('live');
+    }
+  }, []);
 
   // Countdown ticker — only active in 'live' phase
   useEffect(() => {
@@ -103,6 +75,11 @@ export default function Home() {
     // listing wallets as a dependency (which would re-run the animation
     // on every wallet update during the simulation itself).
     const snapshot = walletsRef.current.filter((w) => w.status === 'alive');
+
+    if (snapshot.length === 0) {
+      setPhase('winner');
+      return;
+    }
 
     // Fisher-Yates shuffle to build elimination order
     const shuffled = [...snapshot];
@@ -134,18 +111,10 @@ export default function Home() {
     return () => clearInterval(simulationRef.current);
   }, [phase]);
 
-  const startRound = () => {
-    originalWalletsRef.current = wallets;
-    countdownRef.current = 3600;
-    setCountdown(formatCountdown(countdownRef.current));
-    setPhase('live');
-  };
-
   const resetRound = () => {
     clearInterval(countdownTimerRef.current);
     clearInterval(simulationRef.current);
-    const fresh = originalWalletsRef.current ?? generateWallets();
-    setWallets(fresh.map((w) => ({ ...w, status: w.lives > 0 ? 'alive' : 'eliminated' })));
+    setWallets([]);
     setPhase('waiting');
     setWinner(null);
     setEliminationMessage(null);
@@ -169,7 +138,7 @@ export default function Home() {
 
     setCheckResult({
       eligible: false,
-      balance: 3000,
+      balance: 0,
       lives: 0,
       arenaStatus: 'Not Entered',
     });
@@ -207,15 +176,6 @@ export default function Home() {
           <span>&quot;The longer you hold, the longer you stay in the game.&quot;</span>
         </div>
       </section>
-
-      {/* Start Round button — waiting phase only */}
-      {phase === 'waiting' && (
-        <section style={{ textAlign: 'center', marginTop: '2rem' }}>
-          <button className="start-round-button" onClick={startRound}>
-            ▶ START ROUND
-          </button>
-        </section>
-      )}
 
       {/* Simulating banner */}
       {phase === 'simulating' && (
@@ -260,7 +220,13 @@ export default function Home() {
           </div>
           <div className="card">
             <p className="stat-label">⏱ Round Timer</p>
-            <p className="stat-value">{countdownDisplay()}</p>
+            {phase === 'waiting' ? (
+              <p className="stat-value" style={{ color: 'var(--text-dim)', fontSize: '0.95rem' }}>
+                Round not started yet
+              </p>
+            ) : (
+              <p className="stat-value">{countdownDisplay()}</p>
+            )}
           </div>
           <div className="card">
             <p className="stat-label">🪙 Minimum Holding</p>
@@ -308,57 +274,38 @@ export default function Home() {
       <section>
         <h2>Survivor Table</h2>
         <div className="card table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Wallet</th>
-                <th>Holdings</th>
-                <th>Lives</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {wallets.map((wallet) => (
-                <tr key={wallet.id} className={wallet.status === 'alive' ? 'alive' : 'eliminated'}>
-                  <td>{wallet.rank}</td>
-                  <td>{shortenWallet(wallet.wallet)}</td>
-                  <td>{wallet.holdings.toLocaleString()} $MRYL</td>
-                  <td className="lives-heart">{'❤️'.repeat(wallet.lives)}</td>
-                  <td>
-                    <span className={wallet.status === 'alive' ? 'status-alive' : 'status-eliminated'}>
-                      {wallet.status === 'alive' ? 'ALIVE' : 'ELIMINATED'}
-                    </span>
-                  </td>
+          {wallets.length === 0 ? (
+            <p style={{ color: 'var(--text-dim)', textAlign: 'center', padding: '1.5rem 0' }}>
+              Waiting for holders to enter the arena...
+            </p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Wallet</th>
+                  <th>Holdings</th>
+                  <th>Lives</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* Previous Winners */}
-      <section>
-        <h2>Previous Winners</h2>
-        <div className="card table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Season</th>
-                <th>Winner</th>
-                <th>Jackpot</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PREVIOUS_WINNERS.map((winnerItem) => (
-                <tr key={winnerItem.season}>
-                  <td>{winnerItem.season}</td>
-                  <td>{winnerItem.winner}</td>
-                  <td>{winnerItem.jackpot}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {wallets.map((wallet) => (
+                  <tr key={wallet.id} className={wallet.status === 'alive' ? 'alive' : 'eliminated'}>
+                    <td>{wallet.rank}</td>
+                    <td>{shortenWallet(wallet.wallet)}</td>
+                    <td>{wallet.holdings.toLocaleString()} $MRYL</td>
+                    <td className="lives-heart">{'❤️'.repeat(wallet.lives)}</td>
+                    <td>
+                      <span className={wallet.status === 'alive' ? 'status-alive' : 'status-eliminated'}>
+                        {wallet.status === 'alive' ? 'ALIVE' : 'ELIMINATED'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
     </main>
