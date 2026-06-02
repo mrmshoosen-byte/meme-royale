@@ -166,14 +166,48 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.elimination-button {
-  border-color: var(--neon-red);
-  color: var(--neon-red);
+.start-round-button {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  padding: 1rem 3rem;
+  border: 2px solid var(--neon-green);
+  color: var(--neon-green);
+  background: rgba(0, 255, 136, 0.06);
+  border-radius: 14px;
+  box-shadow: 0 0 18px rgba(0, 255, 136, 0.35), 0 0 40px rgba(0, 255, 136, 0.15);
+  cursor: pointer;
+  transition: 0.2s ease;
+  animation: glow 2s ease-in-out infinite;
 }
 
-.elimination-button:hover:not(:disabled) {
-  background: var(--neon-red);
-  color: #16020a;
+.start-round-button:hover {
+  background: var(--neon-green);
+  color: #04120a;
+  box-shadow: 0 0 30px rgba(0, 255, 136, 0.7), 0 0 60px rgba(0, 255, 136, 0.35);
+}
+
+.simulating-banner {
+  margin-top: 1.5rem;
+  width: 100%;
+  text-align: center;
+  padding: 1rem 1.5rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--neon-red);
+  border: 2px solid var(--neon-red);
+  border-radius: 12px;
+  background: rgba(255, 45, 85, 0.08);
+  animation: flashRed 0.8s ease-in-out infinite;
+}
+
+.reset-button {
+  margin-top: 1.2rem;
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+  font-size: 1rem;
+  padding: 0.65rem 1.8rem;
 }
 
 .result-card {
@@ -268,24 +302,56 @@ tbody tr:nth-child(odd) {
 }
 
 .winner-banner {
-  border: 1px solid var(--neon-green);
-  border-radius: 14px;
-  padding: 1.2rem;
-  margin: 1rem 0;
+  border: 2px solid var(--neon-green);
+  border-radius: 16px;
+  padding: 2rem 1.5rem;
+  margin: 1.5rem 0;
   text-align: center;
-  background: rgba(4, 20, 10, 0.8);
+  background: rgba(4, 20, 10, 0.9);
   animation: pulse 1.8s infinite;
+  width: 100%;
+}
+
+.winner-title {
+  color: var(--neon-green);
+  font-size: 1.6rem;
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 12px rgba(0, 255, 136, 0.8), 0 0 28px rgba(0, 255, 136, 0.5);
+  margin-bottom: 1rem;
 }
 
 .winner-wallet {
-  margin-top: 0.4rem;
+  margin-top: 0.6rem;
   color: var(--neon-green);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
+  font-family: 'Courier New', monospace;
+  word-break: break-all;
+  text-shadow: 0 0 6px rgba(0, 255, 136, 0.6);
 }
 
 .winner-jackpot {
-  margin: 0.35rem 0 1rem;
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1.3rem;
   font-weight: 700;
+  color: var(--neon-green);
+}
+
+.winner-next {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  margin-top: 0.4rem;
+}
+
+@keyframes flashRed {
+  0%,
+  100% {
+    box-shadow: 0 0 8px rgba(255, 45, 85, 0.3);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(255, 45, 85, 0.7);
+    opacity: 0.85;
+  }
 }
 
 @keyframes pulse {

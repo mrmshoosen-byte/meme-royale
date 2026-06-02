@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const BASE58_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const PREVIOUS_WINNERS = [
@@ -46,40 +46,112 @@ const generateWallets = () => {
 };
 
 const formatCountdown = (totalSeconds) => {
-  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
   const seconds = String(totalSeconds % 60).padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
-};
-
-const generateInitialCountdown = () => {
-  const minutes = randomInt(0, 59);
-  const seconds = randomInt(0, 59);
-  return minutes * 60 + seconds;
+  return `${minutes}:${seconds}`;
 };
 
 export default function Home() {
   const [wallets, setWallets] = useState(() => generateWallets());
+  const [phase, setPhase] = useState('waiting');
   const [eliminationMessage, setEliminationMessage] = useState(null);
-  const [season, setSeason] = useState(1);
-  const [countdown, setCountdown] = useState('00:00:00');
+  const [winner, setWinner] = useState(null);
+  const [countdown, setCountdown] = useState('60:00');
   const [checkInput, setCheckInput] = useState('');
   const [checkResult, setCheckResult] = useState(null);
-  const [gameOver, setGameOver] = useState(false);
-  const countdownRef = useRef(generateInitialCountdown());
 
-  const survivors = useMemo(() => wallets.filter((wallet) => wallet.status === 'alive').length, [wallets]);
-  const winner = useMemo(() => wallets.find((wallet) => wallet.status === 'alive') ?? null, [wallets]);
+  const countdownRef = useRef(3600);
+  const countdownTimerRef = useRef(null);
+  const simulationRef = useRef(null);
+  const originalWalletsRef = useRef(null);
+  // Always holds the latest wallets value so simulation useEffect can read it
+  // without listing wallets as a dependency (which would re-trigger the animation).
+  const walletsRef = useRef(wallets);
 
+  const survivors = wallets.filter((w) => w.status === 'alive').length;
+  const jackpot = (wallets.length * 1000).toLocaleString();
+
+  // Keep walletsRef in sync with the wallets state
   useEffect(() => {
-    setCountdown(formatCountdown(countdownRef.current));
-    const timer = setInterval(() => {
-      countdownRef.current = countdownRef.current <= 0 ? 59 * 60 + 59 : countdownRef.current - 1;
-      setCountdown(formatCountdown(countdownRef.current));
+    walletsRef.current = wallets;
+  }, [wallets]);
+
+  // Countdown ticker — only active in 'live' phase
+  useEffect(() => {
+    if (phase !== 'live') return;
+
+    countdownTimerRef.current = setInterval(() => {
+      countdownRef.current -= 1;
+      if (countdownRef.current <= 0) {
+        countdownRef.current = 0;
+        clearInterval(countdownTimerRef.current);
+        setCountdown('00:00');
+        setPhase('simulating');
+      } else {
+        setCountdown(formatCountdown(countdownRef.current));
+      }
     }, 1000);
 
-    return () => clearInterval(timer);
-  }, []);
+    return () => clearInterval(countdownTimerRef.current);
+  }, [phase]);
+
+  // Simulation animation — triggers when phase becomes 'simulating'
+  useEffect(() => {
+    if (phase !== 'simulating') return;
+
+    // Read the current wallets via ref to avoid a stale closure without
+    // listing wallets as a dependency (which would re-run the animation
+    // on every wallet update during the simulation itself).
+    const snapshot = walletsRef.current.filter((w) => w.status === 'alive');
+
+    // Fisher-Yates shuffle to build elimination order
+    const shuffled = [...snapshot];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    // Last wallet in shuffled order is the winner; everyone else is eliminated
+    const winnerWallet = shuffled[shuffled.length - 1];
+    const eliminationOrder = shuffled.slice(0, -1);
+
+    let step = 0;
+
+    simulationRef.current = setInterval(() => {
+      if (step >= eliminationOrder.length) {
+        clearInterval(simulationRef.current);
+        setWinner(winnerWallet);
+        setPhase('winner');
+        return;
+      }
+
+      const target = eliminationOrder[step];
+      setWallets((prev) => prev.map((w) => (w.id === target.id ? { ...w, status: 'eliminated' } : w)));
+      setEliminationMessage(`💀 Wallet ${shortenWallet(target.wallet)} has been knocked out!`);
+      step++;
+    }, 300);
+
+    return () => clearInterval(simulationRef.current);
+  }, [phase]);
+
+  const startRound = () => {
+    originalWalletsRef.current = wallets;
+    countdownRef.current = 3600;
+    setCountdown(formatCountdown(countdownRef.current));
+    setPhase('live');
+  };
+
+  const resetRound = () => {
+    clearInterval(countdownTimerRef.current);
+    clearInterval(simulationRef.current);
+    const fresh = originalWalletsRef.current ?? generateWallets();
+    setWallets(fresh.map((w) => ({ ...w, status: w.lives > 0 ? 'alive' : 'eliminated' })));
+    setPhase('waiting');
+    setWinner(null);
+    setEliminationMessage(null);
+    countdownRef.current = 3600;
+    setCountdown('60:00');
+  };
 
   const runEligibilityCheck = () => {
     const query = checkInput.trim().toLowerCase();
@@ -103,60 +175,24 @@ export default function Home() {
     });
   };
 
-  const simulateElimination = () => {
-    if (gameOver) return;
-
-    const aliveWallets = wallets.filter((wallet) => wallet.status === 'alive');
-    if (aliveWallets.length <= 1) {
-      setGameOver(true);
-      return;
-    }
-
-    const selected = aliveWallets[Math.floor(Math.random() * aliveWallets.length)];
-
-    const updatedWallets = wallets.map((wallet) => {
-      if (wallet.id !== selected.id) return wallet;
-
-      if (wallet.lives > 1) {
-        return { ...wallet, lives: wallet.lives - 1 };
-      }
-
-      return { ...wallet, lives: 0, status: 'eliminated' };
-    });
-
-    const updatedSelected = updatedWallets.find((wallet) => wallet.id === selected.id);
-
-    if (selected.lives > 1) {
-      setEliminationMessage(
-        `⚠️ Wallet ${shortenWallet(selected.wallet)} lost a life! ${updatedSelected?.lives ?? 0} lives left.`
-      );
-    } else {
-      setEliminationMessage(`💀 Wallet ${shortenWallet(selected.wallet)} has been eliminated from the arena.`);
-    }
-
-    const aliveAfter = updatedWallets.filter((wallet) => wallet.status === 'alive').length;
-    if (aliveAfter <= 1) {
-      setGameOver(true);
-    }
-
-    setWallets(updatedWallets);
+  const countdownDisplay = () => {
+    if (phase === 'simulating') return 'DRAWING...';
+    if (phase === 'winner') return 'ROUND OVER';
+    return countdown;
   };
 
-  const startNewSeason = () => {
-    setWallets(generateWallets());
-    setSeason((current) => current + 1);
-    setGameOver(false);
-    setEliminationMessage(null);
-    setCheckInput('');
-    setCheckResult(null);
-    countdownRef.current = generateInitialCountdown();
-    setCountdown(formatCountdown(countdownRef.current));
+  const heroBadgeLabel = () => {
+    if (phase === 'live') return 'LIVE';
+    if (phase === 'simulating') return 'DRAWING';
+    if (phase === 'winner') return 'ENDED';
+    return 'WAITING';
   };
 
   return (
     <main>
+      {/* Hero */}
       <section className="hero">
-        <div className="hero-badge">🏆 SEASON {season} · LIVE</div>
+        <div className="hero-badge">🏆 SEASON 1 · {heroBadgeLabel()}</div>
         <h1 className="hero-title">MEME ROYALE</h1>
         <p className="hero-tagline">Buy. Hold. Survive. Win.</p>
         <p className="hero-desc">
@@ -172,12 +208,47 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Start Round button — waiting phase only */}
+      {phase === 'waiting' && (
+        <section style={{ textAlign: 'center', marginTop: '2rem' }}>
+          <button className="start-round-button" onClick={startRound}>
+            ▶ START ROUND
+          </button>
+        </section>
+      )}
+
+      {/* Simulating banner */}
+      {phase === 'simulating' && (
+        <section className="simulating-banner">⚡ DRAWING WINNER... WALLETS FALLING ⚡</section>
+      )}
+
+      {/* Winner banner */}
+      {phase === 'winner' && winner && (
+        <section className="winner-banner">
+          <h2 className="winner-title">🏆 WINNER THIS ROUND 🏆</h2>
+          <p className="winner-wallet">{winner.wallet}</p>
+          <p className="winner-jackpot">JACKPOT: {jackpot} $MRYL</p>
+          <p className="winner-next">Next Round Starting Soon...</p>
+          <button className="reset-button" onClick={resetRound}>
+            Reset Round
+          </button>
+        </section>
+      )}
+
+      {/* Knockout message during simulation */}
+      {phase === 'simulating' && eliminationMessage && (
+        <div className="alert-box" style={{ margin: '1rem 0' }}>
+          {eliminationMessage}
+        </div>
+      )}
+
+      {/* Live Arena Stats */}
       <section>
         <h2>Live Arena Stats</h2>
         <div className="stats-grid">
           <div className="card">
             <p className="stat-label">🏆 Current Jackpot</p>
-            <p className="jackpot-value">{(survivors * 1000).toLocaleString()} $MRYL</p>
+            <p className="jackpot-value">{jackpot} $MRYL</p>
           </div>
           <div className="card">
             <p className="stat-label">👥 Holders Entered</p>
@@ -188,8 +259,8 @@ export default function Home() {
             <p className="stat-value">{survivors}</p>
           </div>
           <div className="card">
-            <p className="stat-label">⏱ Next Elimination</p>
-            <p className="stat-value">{countdown}</p>
+            <p className="stat-label">⏱ Round Timer</p>
+            <p className="stat-value">{countdownDisplay()}</p>
           </div>
           <div className="card">
             <p className="stat-label">🪙 Minimum Holding</p>
@@ -198,6 +269,7 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Eligibility Checker */}
       <section>
         <h2>Eligibility Checker</h2>
         <div className="card">
@@ -232,6 +304,7 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Survivor Table */}
       <section>
         <h2>Survivor Table</h2>
         <div className="card table-wrap">
@@ -264,26 +337,7 @@ export default function Home() {
         </div>
       </section>
 
-      {gameOver && winner && (
-        <section className="winner-banner">
-          <h2>🏆 FINAL SURVIVOR 🏆</h2>
-          <p className="winner-wallet">{winner.wallet}</p>
-          <p className="winner-jackpot">JACKPOT WON: 1,000 $MRYL</p>
-          <button onClick={startNewSeason}>Start New Season</button>
-        </section>
-      )}
-
-      <section>
-        <h2>⚡ Hourly Elimination</h2>
-        <p>The arena is merciless. One wallet falls every hour.</p>
-        <div className="card" style={{ marginTop: '0.8rem' }}>
-          <button className="elimination-button" onClick={simulateElimination} disabled={survivors <= 1 || gameOver}>
-            ⚔️ Simulate Hourly Elimination
-          </button>
-          {eliminationMessage && <div className="alert-box">{eliminationMessage}</div>}
-        </div>
-      </section>
-
+      {/* Previous Winners */}
       <section>
         <h2>Previous Winners</h2>
         <div className="card table-wrap">
