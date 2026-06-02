@@ -27,6 +27,7 @@ body {
   color: var(--text);
   font-family: 'Courier New', monospace;
   line-height: 1.5;
+  overflow-x: hidden;
 }
 
 main {
@@ -160,6 +161,16 @@ button {
   transition: 0.2s ease;
 }
 
+.eligibility-form {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.eligibility-form input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
 button:hover:not(:disabled) {
   background: var(--neon-green);
   color: #04120a;
@@ -250,12 +261,6 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   gap: 0.75rem;
-}
-
-.arena-admin-notice {
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  text-align: center;
 }
 
 .arena-canvas-container {
@@ -401,16 +406,123 @@ canvas.arena-canvas {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   main {
-    padding: 1.2rem 0.75rem 3rem;
+    padding: 1.5rem 1rem 3rem;
+  }
+
+  h2 {
+    font-size: clamp(1.15rem, 4.5vw, 1.45rem);
+    letter-spacing: 0.1em;
   }
 
   .hero {
-    padding: 1.3rem 0.85rem;
+    padding: 1.4rem 0.9rem;
   }
 
-  .card {
+  .hero-title {
+    font-size: clamp(2rem, 8vw, 4rem);
+    letter-spacing: 0.14em;
+  }
+
+  .hero-tagline {
+    font-size: 1rem;
+  }
+
+  .hero-desc {
+    font-size: 0.92rem;
+    line-height: 1.65;
+  }
+
+  .hero-pills {
+    gap: 0.45rem;
+  }
+
+  .hero-pills span {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .stats-grid .card {
     padding: 1rem;
+  }
+
+  .stat-value {
+    font-size: 1.15rem;
+  }
+
+  .jackpot-value {
+    font-size: 2rem;
+  }
+
+  .arena-title {
+    font-size: 1.3rem;
+  }
+
+  .arena-subtitle {
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  .arena-canvas-container {
+    width: min(90vw, 500px);
+    height: min(90vw, 500px);
+  }
+
+  .arena-tooltip {
+    font-size: 0.75rem;
+  }
+
+  .eligibility-form {
+    flex-direction: column;
+  }
+
+  .eligibility-form input,
+  .eligibility-form button {
+    width: 100%;
+  }
+
+  .result-card {
+    padding: 0.9rem;
+    font-size: 0.9rem;
+  }
+
+  .winner-banner {
+    padding: 1.25rem 1rem;
+  }
+
+  .winner-wallet {
+    font-size: 1rem;
+  }
+
+  .simulating-banner {
+    font-size: 1rem;
+    padding: 0.85rem 1rem;
+  }
+
+  button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-title {
+    letter-spacing: 0.08em;
+  }
+
+  .hero-desc {
+    font-size: 0.88rem;
+  }
+
+  .winner-wallet {
+    font-size: 0.92rem;
   }
 }

@@ -28,7 +28,6 @@ const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const MINIMUM_ENTRY_LABEL = '100,000 Tokens';
-const HOLDER_CONFIG_NOTICE = '⚙️ Configure TOKEN_MINT in page.jsx to load live holders.';
 const HOLDER_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
 
 // Entry tiers based on raw token holdings
@@ -140,7 +139,7 @@ function getWalletColor(index) {
   return `hsl(${(index * 18) % 360}, 90%, 60%)`;
 }
 
-function ArenaCircle({ wallets, phase, statusText, adminNotice }) {
+function ArenaCircle({ wallets, phase, statusText }) {
   const canvasRef = useRef(null);
   const dotsRef = useRef([]);
   const frameRef = useRef(0);
@@ -396,9 +395,14 @@ function ArenaCircle({ wallets, phase, statusText, adminNotice }) {
     }
 
     if (found && found.walletData) {
+      const tooltipWidth = Math.min(320, window.innerWidth - 32);
+      const tooltipHeight = 120;
+      const clampedX = Math.min(Math.max(16, event.clientX + 14), window.innerWidth - tooltipWidth - 16);
+      const clampedY = Math.min(Math.max(16, event.clientY + 14), window.innerHeight - tooltipHeight - 16);
+
       setTooltip({
-        x: event.clientX + 14,
-        y: event.clientY + 14,
+        x: clampedX,
+        y: clampedY,
         walletData: found.walletData,
         alive: found.alive,
       });
@@ -431,7 +435,6 @@ function ArenaCircle({ wallets, phase, statusText, adminNotice }) {
           </div>
         </div>
       )}
-      {adminNotice && <p className="arena-admin-notice">{adminNotice}</p>}
     </div>
   );
 }
@@ -494,7 +497,6 @@ export default function Home() {
   const survivors = wallets.filter((wallet) => wallet.status === 'alive').length;
   const jackpot = (survivors * 1000).toLocaleString();
   const arenaStatusText = holdersError || (holdersLoading && wallets.length === 0 ? 'Loading holders...' : '');
-  const adminNotice = holderFetchConfigured ? '' : HOLDER_CONFIG_NOTICE;
 
   useEffect(() => {
     walletsRef.current = wallets;
@@ -762,13 +764,15 @@ export default function Home() {
         <h2>Eligibility Checker</h2>
         <div className="card">
           <label htmlFor="wallet-check">Check if your wallet is in the draw</label>
-          <input
-            id="wallet-check"
-            value={checkInput}
-            onChange={(event) => setCheckInput(event.target.value)}
-            placeholder="Enter wallet address..."
-          />
-          <button onClick={runEligibilityCheck}>Check Eligibility</button>
+          <div className="eligibility-form">
+            <input
+              id="wallet-check"
+              value={checkInput}
+              onChange={(event) => setCheckInput(event.target.value)}
+              placeholder="Enter wallet address..."
+            />
+            <button onClick={runEligibilityCheck}>Check Eligibility</button>
+          </div>
 
           {checkResult && (
             <div className="card result-card">
@@ -795,7 +799,7 @@ export default function Home() {
       </section>
 
       <section>
-        <ArenaCircle wallets={wallets} phase={phase} statusText={arenaStatusText} adminNotice={adminNotice} />
+        <ArenaCircle wallets={wallets} phase={phase} statusText={arenaStatusText} />
       </section>
     </main>
   );
