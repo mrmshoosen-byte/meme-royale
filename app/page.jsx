@@ -10,17 +10,8 @@ const ROUND_ACTIVE = false;
 const TOKEN_TICKER = '$TOKEN';
 // ─────────────────────────────────────────────────────────────────
 
-// ─── SOLANA RPC CONFIG ────────────────────────────────────────────
-// Public Solana RPC endpoint — no API key required
-// You can swap this for a private RPC later if needed (e.g. Helius, Shyft, QuickNode)
-const SOLANA_RPC_ENDPOINT = 'https://rpc.ankr.com/solana';
-const RPC_ENDPOINTS = ['https://rpc.ankr.com/solana', 'https://solana-mainnet.g.alchemy.com/v2/demo', 'https://mainnet.helius-rpc.com/?api-key=demo'];
-
 // Paste your token mint address here once confirmed
 const TOKEN_MINT = 'FUhZDccwihYfDTpxd6VKdAdw4nintahN5TE3DnkXpump';
-
-// Token decimals — Pump.fun tokens use 6 decimals
-const TOKEN_DECIMALS = 6;
 
 // Refresh holders every N seconds while round is waiting or live (0 = disabled)
 const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
@@ -58,91 +49,21 @@ const getEntriesFromTokenAmount = (tokenAmount) => {
   return 0;
 };
 
-async function fetchHolders(mint, primaryEndpoint, decimals) {
-  const endpoints = [primaryEndpoint, ...RPC_ENDPOINTS.filter((endpoint) => endpoint !== primaryEndpoint)];
-
-  const endpointErrors = [];
-  for (const endpoint of endpoints) {
-    try {
-      const result = await fetchFromEndpoint(endpoint, mint, decimals);
-      return result;
-    } catch (error) {
-      endpointErrors.push(`${endpoint}: ${error.message}`);
-      console.warn(`RPC endpoint failed: ${endpoint}`, error.message);
-    }
-  }
-
-  throw new Error(`All RPC endpoints failed. ${endpointErrors.join(' | ')}`);
-}
-
-async function fetchFromEndpoint(rpcEndpoint, mint, decimals) {
-  const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-
-  const response = await fetch(rpcEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'getProgramAccounts',
-      params: [
-        TOKEN_PROGRAM_ID,
-        {
-          encoding: 'jsonParsed',
-          filters: [
-            { dataSize: 165 },
-            {
-              memcmp: {
-                offset: 0,
-                bytes: mint,
-              },
-            },
-          ],
-        },
-      ],
-    }),
-  });
+async function fetchHolders(mint) {
+  const response = await fetch(`/api/holders?mint=${encodeURIComponent(mint)}`);
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status} from ${rpcEndpoint}`);
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${response.status}`);
   }
 
-  const json = await response.json();
+  const data = await response.json();
 
-  if (json?.error) {
-    throw new Error(json.error.message || `RPC error from ${rpcEndpoint}`);
+  if (data.error) {
+    throw new Error(data.error);
   }
 
-  if (!json.result) {
-    throw new Error(`No result from ${rpcEndpoint}`);
-  }
-
-  const accounts = json.result;
-  const wallets = [];
-
-  for (const account of accounts) {
-    const info = account?.account?.data?.parsed?.info;
-    if (!info) continue;
-
-    const owner = info.owner;
-    const rawAmount = info.tokenAmount?.amount;
-    if (!owner || !rawAmount) continue;
-
-    const tokenAmount = Number(rawAmount) / Math.pow(10, decimals);
-    const entries = getEntriesFromTokenAmount(tokenAmount);
-
-    if (entries === 0) continue;
-
-    wallets.push({
-      id: owner,
-      wallet: owner,
-      tokenAmount,
-      entries,
-      status: 'alive',
-    });
-  }
-
-  return wallets;
+  return data.wallets;
 }
 
 // ─── Arena Circle ─────────────────────────────────────────────────
@@ -539,7 +460,7 @@ export default function Home() {
       clearTimeout(retryTimeoutRef.current);
 
       try {
-        const liveWallets = await fetchHolders(TOKEN_MINT, SOLANA_RPC_ENDPOINT, TOKEN_DECIMALS);
+        const liveWallets = await fetchHolders(TOKEN_MINT);
         setWallets((currentWallets) => mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0));
       } catch (error) {
         console.error('Failed to load holders from Solana RPC', error);
