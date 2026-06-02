@@ -166,27 +166,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.start-round-button {
-  font-size: 1.4rem;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  padding: 1rem 3rem;
-  border: 2px solid var(--neon-green);
-  color: var(--neon-green);
-  background: rgba(0, 255, 136, 0.06);
-  border-radius: 14px;
-  box-shadow: 0 0 18px rgba(0, 255, 136, 0.35), 0 0 40px rgba(0, 255, 136, 0.15);
-  cursor: pointer;
-  transition: 0.2s ease;
-  animation: glow 2s ease-in-out infinite;
-}
-
-.start-round-button:hover {
-  background: var(--neon-green);
-  color: #04120a;
-  box-shadow: 0 0 30px rgba(0, 255, 136, 0.7), 0 0 60px rgba(0, 255, 136, 0.35);
-}
-
 .simulating-banner {
   margin-top: 1.5rem;
   width: 100%;
