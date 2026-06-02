@@ -2,7 +2,7 @@
 
 // ─── ROUND CONTROL ───────────────────────────────────────────────
 // Set to true to start the round countdown. Redeploy to activate.
-const ROUND_ACTIVE = true;
+const ROUND_ACTIVE = false;
 // ─────────────────────────────────────────────────────────────────
 
 // ─── TOKEN CONFIG ─────────────────────────────────────────────────
@@ -10,7 +10,7 @@ const TOKEN_TICKER = '$TOKEN';
 // ─────────────────────────────────────────────────────────────────
 
 // ─── JACKPOT CONFIG ───────────────────────────────────────────────
-const JACKPOT_DISPLAY = '$12 USD';
+const JACKPOT_DISPLAY = '$0 USD';
 // ─────────────────────────────────────────────────────────────────
 
 // ─── SOLANA RPC CONFIG ────────────────────────────────────────────
