@@ -15,7 +15,7 @@ const JACKPOT_DISPLAY = '$12 USD';
 
 // ─── SOLANA RPC CONFIG ────────────────────────────────────────────
 const TOKEN_MINT = '8t2phMFTJX6C3PpEehwdR4X8kP4X8S4cqyZBhRz9pump';
-const HOLDER_REFRESH_INTERVAL_SECONDS = 30;
+const HOLDER_REFRESH_INTERVAL_SECONDS = 10;
 // ─────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useRef, useState } from 'react';
