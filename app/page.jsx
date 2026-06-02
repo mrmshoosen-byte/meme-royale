@@ -2,7 +2,7 @@
 
 // ─── ROUND CONTROL ───────────────────────────────────────────────
 // Set to true to start the round countdown. Redeploy to activate.
-const ROUND_ACTIVE = false;
+const ROUND_ACTIVE = true;
 // ─────────────────────────────────────────────────────────────────
 
 // ─── TOKEN CONFIG ─────────────────────────────────────────────────
