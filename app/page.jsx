@@ -616,7 +616,7 @@ export default function Home() {
       setWallets((currentWallets) =>
         currentWallets.map((wallet) => (wallet.id === target.id ? { ...wallet, status: 'eliminated' } : wallet)),
       );
-      setDrawMessage(`🎲 Finalizing the draw... ${shortenWallet(target.wallet)} is out this round.`);
+      setDrawMessage(`🎲 Finalizing the draw... ${shortenWallet(target.wallet)} was not selected.`);
       step++;
     }, 300);
 
