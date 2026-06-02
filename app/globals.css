@@ -124,6 +124,10 @@ h2 {
   font-weight: 700;
 }
 
+.stat-status {
+  font-size: 1rem;
+}
+
 .jackpot-value {
   font-size: 2.5rem;
   color: var(--neon-green);
@@ -204,6 +208,11 @@ button:disabled {
   font-weight: 700;
 }
 
+.result-empty {
+  margin-top: 0.55rem;
+  color: var(--text-dim);
+}
+
 .status-good {
   color: var(--neon-green);
 }
@@ -243,6 +252,12 @@ button:disabled {
   gap: 0.75rem;
 }
 
+.arena-admin-notice {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
 .arena-canvas-container {
   position: relative;
   width: 500px;
@@ -270,7 +285,9 @@ canvas.arena-canvas {
   font-size: 0.8rem;
   pointer-events: none;
   z-index: 100;
-  white-space: nowrap;
+  max-width: min(320px, calc(100vw - 2rem));
+  white-space: normal;
+  word-break: break-word;
   color: var(--text);
 }
 
