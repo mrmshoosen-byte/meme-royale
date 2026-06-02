@@ -2,7 +2,7 @@
 
 // ─── ROUND CONTROL ───────────────────────────────────────────────
 // Set to true to start the round countdown. Redeploy to activate.
-const ROUND_ACTIVE = false;
+const ROUND_ACTIVE = true;
 // ─────────────────────────────────────────────────────────────────
 
 // ─── TOKEN CONFIG ─────────────────────────────────────────────────
@@ -19,17 +19,17 @@ const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const MINIMUM_ENTRY_LABEL = '100,000 Tokens';
+const MINIMUM_ENTRY_LABEL = '10,000 Tokens';
 const HOLDER_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
 
 // Entry tiers based on raw token holdings
-// Tier 1: 100k+   → 1 entry (1 ball)
-// Tier 2: 500k+   → 2 entries (2 balls)
-// Tier 3: 1M+     → 3 entries (3 balls) — maximum
+// Tier 1: 10k+    → 1 entry (1 ball)
+// Tier 2: 100k+   → 2 entries (2 balls)
+// Tier 3: 500k+   → 3 entries (3 balls) — maximum
 const ENTRY_TIERS = [
-  { minTokens: 1_000_000, entries: 3 },
-  { minTokens: 500_000, entries: 2 },
-  { minTokens: 100_000, entries: 1 },
+  { minTokens: 500_000, entries: 3 },
+  { minTokens: 100_000, entries: 2 },
+  { minTokens: 10_000, entries: 1 },
 ];
 const MINIMUM_ENTRY_TOKENS = ENTRY_TIERS[ENTRY_TIERS.length - 1].minTokens;
 const MINIMUM_ENTRY_REQUIREMENT = `${MINIMUM_ENTRY_TOKENS.toLocaleString()}+ tokens`;
@@ -630,7 +630,7 @@ export default function Home() {
           the more entries you get.
         </p>
         <div className="hero-pills">
-          <span>&quot;Hold 100,000+ tokens to enter.&quot;</span>
+          <span>&quot;Hold 10,000+ tokens to enter.&quot;</span>
           <span>&quot;One winner drawn every hour.&quot;</span>
           <span>&quot;More tokens = more entries.&quot;</span>
           <span>&quot;Final winner takes the jackpot.&quot;</span>
