@@ -40,6 +40,8 @@ const ENTRY_TIERS = [
   { minTokens: 500_000, entries: 2 },
   { minTokens: 100_000, entries: 1 },
 ];
+const MINIMUM_ENTRY_TOKENS = ENTRY_TIERS[ENTRY_TIERS.length - 1].minTokens;
+const MINIMUM_ENTRY_REQUIREMENT = `${MINIMUM_ENTRY_TOKENS.toLocaleString()}+ tokens`;
 
 const shortenWallet = (wallet) => `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
 
@@ -475,7 +477,7 @@ const mergeWallets = (currentWallets, incomingWallets, preserveExisting) => {
 export default function Home() {
   const [wallets, setWallets] = useState([]);
   const [phase, setPhase] = useState('waiting');
-  const [eliminationMessage, setEliminationMessage] = useState(null);
+  const [drawMessage, setDrawMessage] = useState(null);
   const [winner, setWinner] = useState(null);
   const [countdown, setCountdown] = useState('60:00');
   const [checkInput, setCheckInput] = useState('');
@@ -614,7 +616,7 @@ export default function Home() {
       setWallets((currentWallets) =>
         currentWallets.map((wallet) => (wallet.id === target.id ? { ...wallet, status: 'eliminated' } : wallet)),
       );
-      setEliminationMessage(`🎲 Finalizing the draw... ${shortenWallet(target.wallet)} is out this round.`);
+      setDrawMessage(`🎲 Finalizing the draw... ${shortenWallet(target.wallet)} is out this round.`);
       step++;
     }, 300);
 
@@ -628,7 +630,7 @@ export default function Home() {
     setWallets([]);
     setPhase('waiting');
     setWinner(null);
-    setEliminationMessage(null);
+    setDrawMessage(null);
     setCheckResult(null);
     countdownRef.current = 3600;
     setCountdown('60:00');
@@ -662,7 +664,7 @@ export default function Home() {
     setCheckResult({
       eligible: false,
       arenaStatus: 'Not Entered',
-      message: 'Wallet not found. Hold 100,000+ tokens to enter the arena.',
+      message: `Wallet not found. Hold ${MINIMUM_ENTRY_REQUIREMENT} to enter the arena.`,
     });
   };
 
@@ -714,9 +716,9 @@ export default function Home() {
         </section>
       )}
 
-      {phase === 'simulating' && eliminationMessage && (
+      {phase === 'simulating' && drawMessage && (
         <div className="alert-box" style={{ margin: '1rem 0' }}>
-          {eliminationMessage}
+          {drawMessage}
         </div>
       )}
 
