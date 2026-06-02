@@ -10,26 +10,26 @@ const ROUND_ACTIVE = false;
 const TOKEN_TICKER = '$TOKEN';
 // ─────────────────────────────────────────────────────────────────
 
-// ─── HELIUS CONFIG ────────────────────────────────────────────────
-// Add your Helius API key to Vercel environment variables as:
-//   NEXT_PUBLIC_HELIUS_API_KEY=your_key_here
-// Get a free key at: https://helius.dev
-const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || '';
+// ─── SOLANA RPC CONFIG ────────────────────────────────────────────
+// Public Solana RPC endpoint — no API key required
+// You can swap this for a private RPC later if needed (e.g. Helius, Shyft, QuickNode)
+const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
 
 // Paste your token mint address here once confirmed
 const TOKEN_MINT = 'PASTE_MINT_ADDRESS_HERE';
 
+// Token decimals — Pump.fun tokens use 6 decimals
 const TOKEN_DECIMALS = 6;
 
-// Refresh holders every N seconds (set to 0 to disable auto-refresh)
+// Refresh holders every N seconds while round is waiting or live (0 = disabled)
 const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
 // ─────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const MINIMUM_ENTRY_LABEL = '100,000 Tokens';
-const HELIUS_CONFIG_NOTICE = '⚙️ Configure TOKEN_MINT and NEXT_PUBLIC_HELIUS_API_KEY to load live holders.';
-const HELIUS_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
+const HOLDER_CONFIG_NOTICE = '⚙️ Configure TOKEN_MINT in page.jsx to load live holders.';
+const HOLDER_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
 
 // Entry tiers based on raw token holdings
 // Tier 1: 100k+   → 1 entry (1 ball)
@@ -58,77 +58,75 @@ const getEntriesFromTokenAmount = (tokenAmount) => {
   return 0;
 };
 
-async function fetchHolders(mint, apiKey) {
-  const endpoint = `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(apiKey)}`;
-  const walletBalances = new Map();
-  let cursor;
+async function fetchHolders(mint, rpcEndpoint, decimals) {
+  // SPL Token program ID
+  const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
-  do {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'meme-royale',
-        method: 'getTokenAccounts',
-        params: {
-          mint,
-          limit: 1000,
-          ...(cursor ? { cursor } : {}),
+  // Fetch all token accounts for this mint using getProgramAccounts
+  const response = await fetch(rpcEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getProgramAccounts',
+      params: [
+        TOKEN_PROGRAM_ID,
+        {
+          encoding: 'jsonParsed',
+          filters: [
+            { dataSize: 165 }, // standard SPL token account size
+            {
+              memcmp: {
+                offset: 0,
+                bytes: mint, // filter by mint address
+              },
+            },
+          ],
         },
-      }),
-      cache: 'no-store',
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC request failed with status ${response.status}`);
+  }
+
+  const json = await response.json();
+
+  if (json?.error) {
+    throw new Error(json.error.message || 'RPC request failed');
+  }
+
+  if (!json.result) throw new Error('No result from RPC');
+
+  const accounts = json.result;
+
+  const wallets = [];
+
+  for (const account of accounts) {
+    const info = account?.account?.data?.parsed?.info;
+    if (!info) continue;
+
+    const owner = info.owner;
+    const rawAmount = info.tokenAmount?.amount;
+    if (!owner || !rawAmount) continue;
+
+    const tokenAmount = Number(rawAmount) / Math.pow(10, decimals);
+    const entries = getEntriesFromTokenAmount(tokenAmount);
+
+    if (entries === 0) continue; // below minimum threshold
+
+    wallets.push({
+      id: owner,
+      wallet: owner,
+      tokenAmount,
+      entries,
+      status: 'alive',
     });
+  }
 
-    if (!response.ok) {
-      throw new Error(`Helius request failed with status ${response.status}`);
-    }
-
-    const payload = await response.json();
-
-    if (payload?.error) {
-      throw new Error(payload.error.message || 'Helius request failed');
-    }
-
-    const result = payload?.result ?? {};
-    const tokenAccounts = Array.isArray(result.token_accounts) ? result.token_accounts : [];
-
-    tokenAccounts.forEach((account) => {
-      const owner = account?.owner;
-      const rawAmount = Number(account?.amount || 0);
-
-      if (!owner || !Number.isFinite(rawAmount) || rawAmount <= 0) {
-        return;
-      }
-
-      const tokenAmount = rawAmount / 10 ** TOKEN_DECIMALS;
-      const previousAmount = walletBalances.get(owner) || 0;
-      walletBalances.set(owner, previousAmount + tokenAmount);
-    });
-
-    cursor = result?.cursor;
-  } while (cursor);
-
-  return Array.from(walletBalances.entries())
-    .map(([owner, tokenAmount]) => {
-      const entries = getEntriesFromTokenAmount(tokenAmount);
-
-      if (entries <= 0) {
-        return null;
-      }
-
-      return {
-        id: owner,
-        wallet: owner,
-        tokenAmount,
-        entries,
-        status: 'alive',
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.tokenAmount - a.tokenAmount);
+  return wallets;
 }
 
 // ─── Arena Circle ─────────────────────────────────────────────────
@@ -492,11 +490,11 @@ export default function Home() {
   const retryTimeoutRef = useRef(null);
   const isFetchingRef = useRef(false);
 
-  const heliusConfigured = TOKEN_MINT !== 'PASTE_MINT_ADDRESS_HERE' && HELIUS_API_KEY !== '';
+  const holderFetchConfigured = TOKEN_MINT !== 'PASTE_MINT_ADDRESS_HERE';
   const survivors = wallets.filter((wallet) => wallet.status === 'alive').length;
   const jackpot = (survivors * 1000).toLocaleString();
   const arenaStatusText = holdersError || (holdersLoading && wallets.length === 0 ? 'Loading holders...' : '');
-  const adminNotice = heliusConfigured ? '' : HELIUS_CONFIG_NOTICE;
+  const adminNotice = holderFetchConfigured ? '' : HOLDER_CONFIG_NOTICE;
 
   useEffect(() => {
     walletsRef.current = wallets;
@@ -512,7 +510,7 @@ export default function Home() {
 
   const loadHolders = useCallback(
     async ({ preserveExisting = false } = {}) => {
-      if (!heliusConfigured || isFetchingRef.current) {
+      if (!holderFetchConfigured || isFetchingRef.current) {
         return;
       }
 
@@ -522,11 +520,11 @@ export default function Home() {
       clearTimeout(retryTimeoutRef.current);
 
       try {
-        const liveWallets = await fetchHolders(TOKEN_MINT, HELIUS_API_KEY);
+        const liveWallets = await fetchHolders(TOKEN_MINT, SOLANA_RPC_ENDPOINT, TOKEN_DECIMALS);
         setWallets((currentWallets) => mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0));
       } catch (error) {
-        console.error('Failed to load holders from Helius', error);
-        setHoldersError(HELIUS_RETRY_MESSAGE);
+        console.error('Failed to load holders from Solana RPC', error);
+        setHoldersError(HOLDER_RETRY_MESSAGE);
         retryTimeoutRef.current = setTimeout(() => {
           loadHolders({ preserveExisting: true });
         }, 30_000);
@@ -535,13 +533,13 @@ export default function Home() {
         isFetchingRef.current = false;
       }
     },
-    [heliusConfigured],
+    [holderFetchConfigured],
   );
 
   useEffect(() => {
     clearTimeout(retryTimeoutRef.current);
 
-    if (!heliusConfigured) {
+    if (!holderFetchConfigured) {
       setWallets([]);
       setHoldersLoading(false);
       setHoldersError('');
@@ -551,10 +549,10 @@ export default function Home() {
     loadHolders();
 
     return () => clearTimeout(retryTimeoutRef.current);
-  }, [heliusConfigured, loadHolders]);
+  }, [holderFetchConfigured, loadHolders]);
 
   useEffect(() => {
-    if (!heliusConfigured || HOLDER_REFRESH_INTERVAL_SECONDS <= 0 || !['waiting', 'live'].includes(phase)) {
+    if (!holderFetchConfigured || HOLDER_REFRESH_INTERVAL_SECONDS <= 0 || !['waiting', 'live'].includes(phase)) {
       return;
     }
 
@@ -563,7 +561,7 @@ export default function Home() {
     }, HOLDER_REFRESH_INTERVAL_SECONDS * 1000);
 
     return () => clearInterval(intervalId);
-  }, [heliusConfigured, loadHolders, phase]);
+  }, [holderFetchConfigured, loadHolders, phase]);
 
   useEffect(() => {
     if (phase !== 'live') return;
@@ -635,7 +633,7 @@ export default function Home() {
     countdownRef.current = 3600;
     setCountdown('60:00');
 
-    if (heliusConfigured) {
+    if (holderFetchConfigured) {
       loadHolders();
     }
   };
