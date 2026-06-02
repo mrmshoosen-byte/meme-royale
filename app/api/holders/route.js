@@ -1,8 +1,5 @@
 import { NextResponse } from 'next/server';
 
-const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-const TOKEN_DECIMALS = 6;
-
 const RPC_ENDPOINTS = [
   'https://api.mainnet-beta.solana.com',
   'https://rpc.ankr.com/solana',
@@ -16,22 +13,8 @@ async function fetchFromEndpoint(rpcEndpoint, mint) {
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
-      method: 'getProgramAccounts',
-      params: [
-        TOKEN_PROGRAM_ID,
-        {
-          encoding: 'jsonParsed',
-          filters: [
-            { dataSize: 165 },
-            {
-              memcmp: {
-                offset: 0,
-                bytes: mint,
-              },
-            },
-          ],
-        },
-      ],
+      method: 'getTokenLargestAccounts',
+      params: [mint],
     }),
   });
 
@@ -45,11 +28,11 @@ async function fetchFromEndpoint(rpcEndpoint, mint) {
     throw new Error(json.error.message || `RPC error from ${rpcEndpoint}`);
   }
 
-  if (!json.result) {
+  if (!json.result?.value) {
     throw new Error(`No result from ${rpcEndpoint}`);
   }
 
-  return json.result;
+  return json.result.value;
 }
 
 export async function GET(request) {
@@ -67,9 +50,9 @@ export async function GET(request) {
       const accounts = await fetchFromEndpoint(endpoint, mint);
 
       const ENTRY_TIERS = [
-        { minTokens: 1_000_000, entries: 3 },
-        { minTokens: 500_000, entries: 2 },
-        { minTokens: 100_000, entries: 1 },
+        { minTokens: 500_000, entries: 3 },
+        { minTokens: 100_000, entries: 2 },
+        { minTokens: 10_000, entries: 1 },
       ];
 
       const getEntries = (tokenAmount) => {
@@ -82,21 +65,16 @@ export async function GET(request) {
       const wallets = [];
 
       for (const account of accounts) {
-        const info = account?.account?.data?.parsed?.info;
-        if (!info) continue;
+        const tokenAmount = account.uiAmount || 0;
+        const address = account.address;
+        if (!address || tokenAmount === 0) continue;
 
-        const owner = info.owner;
-        const rawAmount = info.tokenAmount?.amount;
-        if (!owner || !rawAmount) continue;
-
-        const tokenAmount = Number(rawAmount) / Math.pow(10, TOKEN_DECIMALS);
         const entries = getEntries(tokenAmount);
-
         if (entries === 0) continue;
 
         wallets.push({
-          id: owner,
-          wallet: owner,
+          id: address,
+          wallet: address,
           tokenAmount,
           entries,
           status: 'alive',
