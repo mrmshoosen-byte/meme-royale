@@ -6,7 +6,6 @@ const ROUND_ACTIVE = true;
 // ─────────────────────────────────────────────────────────────────
 
 // ─── TOKEN CONFIG ─────────────────────────────────────────────────
-// Set your token ticker here when confirmed
 const TOKEN_TICKER = '$TOKEN';
 // ─────────────────────────────────────────────────────────────────
 
@@ -15,12 +14,7 @@ const JACKPOT_DISPLAY = '$12 USD';
 // ─────────────────────────────────────────────────────────────────
 
 // ─── SOLANA RPC CONFIG ────────────────────────────────────────────
-const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
-
 const TOKEN_MINT = 'FUhZDccwihYfDTpxd6VKdAdw4nintahN5TE3DnkXpump';
-
-const TOKEN_DECIMALS = 6;
-
 const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
 // ─────────────────────────────────────────────────────────────────
 
@@ -36,6 +30,14 @@ const ENTRY_TIERS = [
 ];
 const MINIMUM_ENTRY_TOKENS = ENTRY_TIERS[ENTRY_TIERS.length - 1].minTokens;
 const MINIMUM_ENTRY_REQUIREMENT = `${MINIMUM_ENTRY_TOKENS.toLocaleString()}+ tokens`;
+
+// Returns seconds remaining until the next top-of-the-hour.
+// This is the same value for every user on earth at any given moment.
+function getSecondsUntilNextHour() {
+  const now = new Date();
+  const secondsElapsed = now.getMinutes() * 60 + now.getSeconds();
+  return 3600 - secondsElapsed;
+}
 
 const shortenWallet = (wallet) => `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
 
@@ -383,9 +385,7 @@ const formatCountdown = (totalSeconds) => {
 };
 
 const mergeWallets = (currentWallets, incomingWallets, preserveExisting) => {
-  if (!preserveExisting) {
-    return incomingWallets;
-  }
+  if (!preserveExisting) return incomingWallets;
 
   const incomingById = new Map(incomingWallets.map((wallet) => [wallet.id, wallet]));
   const mergedWallets = currentWallets.map((wallet) => {
@@ -407,13 +407,13 @@ export default function Home() {
   const [phase, setPhase] = useState('waiting');
   const [drawMessage, setDrawMessage] = useState(null);
   const [winner, setWinner] = useState(null);
-  const [countdown, setCountdown] = useState('60:00');
+  const [countdown, setCountdown] = useState('--:--');
   const [checkInput, setCheckInput] = useState('');
   const [checkResult, setCheckResult] = useState(null);
   const [holdersLoading, setHoldersLoading] = useState(false);
   const [holdersError, setHoldersError] = useState('');
 
-  const countdownRef = useRef(3600);
+  const countdownRef = useRef(0);
   const countdownTimerRef = useRef(null);
   const simulationRef = useRef(null);
   const walletsRef = useRef([]);
@@ -428,13 +428,18 @@ export default function Home() {
     walletsRef.current = wallets;
   }, [wallets]);
 
+  // ── Clock-synced countdown ──────────────────────────────────────
+  // On mount, read the real clock and start counting down to the
+  // next top-of-the-hour. Every visitor gets the exact same value.
   useEffect(() => {
-    if (ROUND_ACTIVE) {
-      countdownRef.current = 3600;
-      setCountdown(formatCountdown(countdownRef.current));
-      setPhase('live');
-    }
+    if (!ROUND_ACTIVE) return;
+
+    const initialSeconds = getSecondsUntilNextHour();
+    countdownRef.current = initialSeconds;
+    setCountdown(formatCountdown(initialSeconds));
+    setPhase('live');
   }, []);
+  // ───────────────────────────────────────────────────────────────
 
   const loadHolders = useCallback(
     async ({ preserveExisting = false } = {}) => {
@@ -447,7 +452,9 @@ export default function Home() {
 
       try {
         const liveWallets = await fetchHolders(TOKEN_MINT);
-        setWallets((currentWallets) => mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0));
+        setWallets((currentWallets) =>
+          mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0),
+        );
       } catch (error) {
         console.error('Failed to load holders', error);
         setHoldersError(HOLDER_RETRY_MESSAGE);
@@ -491,14 +498,16 @@ export default function Home() {
     if (phase !== 'live') return;
 
     countdownTimerRef.current = setInterval(() => {
-      countdownRef.current -= 1;
-      if (countdownRef.current <= 0) {
-        countdownRef.current = 0;
+      // Always re-derive from real clock so drift is impossible
+      const remaining = getSecondsUntilNextHour();
+      countdownRef.current = remaining;
+
+      if (remaining <= 0) {
         clearInterval(countdownTimerRef.current);
         setCountdown('00:00');
         setPhase('simulating');
       } else {
-        setCountdown(formatCountdown(countdownRef.current));
+        setCountdown(formatCountdown(remaining));
       }
     }, 1000);
 
@@ -554,8 +563,15 @@ export default function Home() {
     setWinner(null);
     setDrawMessage(null);
     setCheckResult(null);
-    countdownRef.current = 3600;
-    setCountdown('60:00');
+
+    if (ROUND_ACTIVE) {
+      const remaining = getSecondsUntilNextHour();
+      countdownRef.current = remaining;
+      setCountdown(formatCountdown(remaining));
+      setPhase('live');
+    } else {
+      setCountdown('--:--');
+    }
 
     if (holderFetchConfigured) loadHolders();
   };
