@@ -16,7 +16,7 @@ const TOKEN_TICKER = '$TOKEN';
 const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
 
 // Paste your token mint address here once confirmed
-const TOKEN_MINT = 'PASTE_MINT_ADDRESS_HERE';
+const TOKEN_MINT = 'FUhZDccwihYfDTpxd6VKdAdw4nintahN5TE3DnkXpump';
 
 // Token decimals — Pump.fun tokens use 6 decimals
 const TOKEN_DECIMALS = 6;
