@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
 
-const RPC_ENDPOINTS = [
-  'https://api.mainnet-beta.solana.com',
-  'https://rpc.ankr.com/solana',
-  'https://solana-mainnet.g.alchemy.com/v2/demo',
-];
+const RPC_ENDPOINT =
+  process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+
+const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 const ENTRY_TIERS = [
   { minTokens: 500_000, entries: 3 },
@@ -19,60 +18,25 @@ const getEntries = (tokenAmount) => {
   return 0;
 };
 
-async function fetchFromEndpoint(rpcEndpoint, mint) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+async function rpcCall(method, params) {
+  const res = await fetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: Date.now(),
+      method,
+      params,
+    }),
+  });
 
-  try {
-    const response = await fetch(rpcEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getTokenLargestAccounts',
-        params: [mint],
-      }),
-    });
+  const json = await res.json();
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} from ${rpcEndpoint}`);
-    }
-
-    const json = await response.json();
-
-    if (json?.error) {
-      throw new Error(json.error.message || `RPC error from ${rpcEndpoint}`);
-    }
-
-    if (!json.result?.value) {
-      throw new Error(`No result from ${rpcEndpoint}`);
-    }
-
-    const wallets = [];
-
-    for (const account of json.result.value) {
-      const tokenAmount = account.uiAmount || 0;
-      const address = account.address;
-      if (!address || tokenAmount === 0) continue;
-
-      const entries = getEntries(tokenAmount);
-      if (entries === 0) continue;
-
-      wallets.push({
-        id: address,
-        wallet: address,
-        tokenAmount,
-        entries,
-        status: 'alive',
-      });
-    }
-
-    return wallets;
-  } finally {
-    clearTimeout(timer);
+  if (json.error) {
+    throw new Error(json.error.message);
   }
+
+  return json.result;
 }
 
 export async function GET(request) {
@@ -84,16 +48,62 @@ export async function GET(request) {
   }
 
   try {
-    // Race all endpoints in parallel — fastest one wins
-    const wallets = await Promise.any(
-      RPC_ENDPOINTS.map((endpoint) => fetchFromEndpoint(endpoint, mint))
-    );
+    const result = await rpcCall('getProgramAccounts', [
+      TOKEN_PROGRAM_ID,
+      {
+        encoding: 'jsonParsed',
+        filters: [
+          { dataSize: 165 },
+          {
+            memcmp: {
+              offset: 0,
+              bytes: mint,
+            },
+          },
+        ],
+      },
+    ]);
 
-    return NextResponse.json({ wallets });
+    const holderMap = new Map();
+
+    for (const account of result) {
+      const info = account.account.data.parsed.info;
+
+      const owner = info.owner;
+      const amount = Number(info.tokenAmount.uiAmount || 0);
+
+      if (!owner || amount <= 0) continue;
+
+      holderMap.set(owner, (holderMap.get(owner) || 0) + amount);
+    }
+
+    const wallets = [...holderMap.entries()]
+      .map(([wallet, tokenAmount]) => {
+        const entries = getEntries(tokenAmount);
+
+        return {
+          id: wallet,
+          wallet,
+          tokenAmount,
+          entries,
+          status: 'alive',
+        };
+      })
+      .filter((holder) => holder.entries > 0)
+      .sort((a, b) => b.tokenAmount - a.tokenAmount);
+
+    return NextResponse.json({
+      wallets,
+      totalHolders: wallets.length,
+    });
   } catch (err) {
-    console.error('All RPC endpoints failed', err);
+    console.error('Holder fetch failed:', err);
+
     return NextResponse.json(
-      { error: 'All RPC endpoints failed. Please try again.' },
+      {
+        error: 'Failed to fetch holders',
+        details: err.message,
+      },
       { status: 500 }
     );
   }
