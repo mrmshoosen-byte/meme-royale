@@ -19,9 +19,6 @@ const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || '';
 // Paste your token mint address here once confirmed
 const TOKEN_MINT = 'PASTE_MINT_ADDRESS_HERE';
 
-// Token price in USD — update this or wire up a price feed later
-// This is used to calculate USD value of each holder's balance
-const TOKEN_PRICE_USD = 0; // e.g. 0.00042
 const TOKEN_DECIMALS = 6;
 
 // Refresh holders every N seconds (set to 0 to disable auto-refresh)
@@ -30,18 +27,18 @@ const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const MINIMUM_ENTRY_LABEL = '$100,000 USD value';
+const MINIMUM_ENTRY_LABEL = '100,000 Tokens';
 const HELIUS_CONFIG_NOTICE = '⚙️ Configure TOKEN_MINT and NEXT_PUBLIC_HELIUS_API_KEY to load live holders.';
 const HELIUS_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
 
-// Entry tiers based on USD value of holdings
-// Tier 1: $100k+  → 1 entry (1 ball)
-// Tier 2: $500k+  → 2 entries (2 balls)
-// Tier 3: $1M+    → 3 entries (3 balls) — maximum
+// Entry tiers based on raw token holdings
+// Tier 1: 100k+   → 1 entry (1 ball)
+// Tier 2: 500k+   → 2 entries (2 balls)
+// Tier 3: 1M+     → 3 entries (3 balls) — maximum
 const ENTRY_TIERS = [
-  { minUsd: 1_000_000, entries: 3 },
-  { minUsd: 500_000, entries: 2 },
-  { minUsd: 100_000, entries: 1 },
+  { minTokens: 1_000_000, entries: 3 },
+  { minTokens: 500_000, entries: 2 },
+  { minTokens: 100_000, entries: 1 },
 ];
 
 const shortenWallet = (wallet) => `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
@@ -52,20 +49,14 @@ const formatTokenAmount = (value) =>
     maximumFractionDigits: 2,
   });
 
-const formatUsd = (value) =>
-  `${value.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })} USD`;
-
-const getEntriesFromUsdValue = (usdValue) => {
+const getEntriesFromTokenAmount = (tokenAmount) => {
   for (const tier of ENTRY_TIERS) {
-    if (usdValue >= tier.minUsd) return tier.entries;
+    if (tokenAmount >= tier.minTokens) return tier.entries;
   }
   return 0;
 };
 
-async function fetchHolders(mint, apiKey, tokenPriceUsd) {
+async function fetchHolders(mint, apiKey) {
   const endpoint = `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(apiKey)}`;
   const walletBalances = new Map();
   let cursor;
@@ -120,8 +111,7 @@ async function fetchHolders(mint, apiKey, tokenPriceUsd) {
 
   return Array.from(walletBalances.entries())
     .map(([owner, tokenAmount]) => {
-      const usdValue = tokenAmount * tokenPriceUsd;
-      const entries = getEntriesFromUsdValue(usdValue);
+      const entries = getEntriesFromTokenAmount(tokenAmount);
 
       if (entries <= 0) {
         return null;
@@ -131,13 +121,12 @@ async function fetchHolders(mint, apiKey, tokenPriceUsd) {
         id: owner,
         wallet: owner,
         tokenAmount,
-        usdValue,
         entries,
         status: 'alive',
       };
     })
     .filter(Boolean)
-    .sort((a, b) => b.usdValue - a.usdValue);
+    .sort((a, b) => b.tokenAmount - a.tokenAmount);
 }
 
 // ─── Arena Circle ─────────────────────────────────────────────────
@@ -421,7 +410,7 @@ function ArenaCircle({ wallets, phase, statusText, adminNotice }) {
   return (
     <div className="arena-wrap">
       <h2 className="arena-title">THE ARENA</h2>
-      <p className="arena-subtitle">Each dot = one entry ball. Hover to reveal wallet.</p>
+      <p className="arena-subtitle">Each ball = one entry. Hover to reveal wallet.</p>
       <div className="arena-canvas-container">
         <canvas
           ref={canvasRef}
@@ -435,13 +424,10 @@ function ArenaCircle({ wallets, phase, statusText, adminNotice }) {
       {tooltip && (
         <div className="arena-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
           <div className="arena-tooltip-wallet">{tooltip.walletData.wallet}</div>
-          <div>
-            {formatTokenAmount(tooltip.walletData.tokenAmount)} {TOKEN_TICKER}
-          </div>
-          <div>{formatUsd(tooltip.walletData.usdValue)}</div>
+          <div>Holdings: {formatTokenAmount(tooltip.walletData.tokenAmount)} tokens</div>
           <div>Entries: {tooltip.walletData.entries}</div>
           <div className={tooltip.alive ? 'arena-tooltip-alive' : 'arena-tooltip-eliminated'}>
-            {tooltip.alive ? 'ALIVE' : 'ELIMINATED'}
+            {tooltip.alive ? 'In Draw' : 'Eliminated'}
           </div>
         </div>
       )}
@@ -534,7 +520,7 @@ export default function Home() {
       clearTimeout(retryTimeoutRef.current);
 
       try {
-        const liveWallets = await fetchHolders(TOKEN_MINT, HELIUS_API_KEY, TOKEN_PRICE_USD);
+        const liveWallets = await fetchHolders(TOKEN_MINT, HELIUS_API_KEY);
         setWallets((currentWallets) => mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0));
       } catch (error) {
         console.error('Failed to load holders from Helius', error);
@@ -628,7 +614,7 @@ export default function Home() {
       setWallets((currentWallets) =>
         currentWallets.map((wallet) => (wallet.id === target.id ? { ...wallet, status: 'eliminated' } : wallet)),
       );
-      setEliminationMessage(`💀 Wallet ${shortenWallet(target.wallet)} has been knocked out!`);
+      setEliminationMessage(`🎲 Finalizing the draw... ${shortenWallet(target.wallet)} is out this round.`);
       step++;
     }, 300);
 
@@ -667,16 +653,16 @@ export default function Home() {
         eligible: true,
         wallet: match.wallet,
         tokenAmount: match.tokenAmount,
-        usdValue: match.usdValue,
         entries: match.entries,
-        arenaStatus: match.status === 'alive' ? 'In Arena' : 'Eliminated',
+        arenaStatus: match.status === 'alive' ? 'In Draw' : 'Eliminated',
       });
       return;
     }
 
     setCheckResult({
       eligible: false,
-      message: "Wallet not found in arena. You may not hold enough or the round hasn't loaded yet.",
+      arenaStatus: 'Not Entered',
+      message: 'Wallet not found. Hold 100,000+ tokens to enter the arena.',
     });
   };
 
@@ -698,21 +684,21 @@ export default function Home() {
       <section className="hero">
         <div className="hero-badge">🏆 SEASON 1 · {heroBadgeLabel()}</div>
         <h1 className="hero-title">MEME ROYALE</h1>
-        <p className="hero-tagline">Buy. Hold. Survive. Win.</p>
+        <p className="hero-tagline">Hold. Enter. Win.</p>
         <p className="hero-desc">
-          Holders above the minimum enter the arena. Every hour, one wallet is eliminated. Last wallet standing wins
-          the jackpot.
+          Hold enough tokens to enter the arena. Every hour, one lucky wallet wins the jackpot. The more you hold,
+          the more entries you get.
         </p>
         <div className="hero-pills">
-          <span>&quot;Every eligible holder enters the arena.&quot;</span>
-          <span>&quot;One wallet falls every hour.&quot;</span>
-          <span>&quot;Final wallet wins the jackpot.&quot;</span>
-          <span>&quot;Survive until the end.&quot;</span>
-          <span>&quot;More USD value unlocks more entries.&quot;</span>
+          <span>&quot;Hold 100,000+ tokens to enter.&quot;</span>
+          <span>&quot;One winner drawn every hour.&quot;</span>
+          <span>&quot;More tokens = more entries.&quot;</span>
+          <span>&quot;Final winner takes the jackpot.&quot;</span>
+          <span>&quot;The more you hold, the better your odds.&quot;</span>
         </div>
       </section>
 
-      {phase === 'simulating' && <section className="simulating-banner">⚡ DRAWING WINNER... WALLETS FALLING ⚡</section>}
+      {phase === 'simulating' && <section className="simulating-banner">⚡ DRAWING WINNER... ⚡</section>}
 
       {phase === 'winner' && winner && (
         <section className="winner-banner">
@@ -721,7 +707,7 @@ export default function Home() {
           <p className="winner-jackpot">
             JACKPOT: {jackpot} {TOKEN_TICKER}
           </p>
-          <p className="winner-next">Next Round Starting Soon...</p>
+          <p className="winner-next">Jackpot claimed. Next draw starting soon...</p>
           <button className="reset-button" onClick={resetRound}>
             Reset Round
           </button>
@@ -735,7 +721,7 @@ export default function Home() {
       )}
 
       <section>
-        <h2>Live Arena Stats</h2>
+        <h2>Live Arena</h2>
         <div className="stats-grid">
           <div className="card">
             <p className="stat-label">🏆 Current Jackpot</p>
@@ -748,18 +734,18 @@ export default function Home() {
             )}
           </div>
           <div className="card">
-            <p className="stat-label">👥 Holders Entered</p>
+            <p className="stat-label">👥 Wallets Entered</p>
             <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading holders...' : wallets.length}</p>
           </div>
           <div className="card">
-            <p className="stat-label">💀 Survivors Remaining</p>
+            <p className="stat-label">🎯 Still In Draw</p>
             <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading holders...' : survivors}</p>
           </div>
           <div className="card">
             <p className="stat-label">⏱ Round Timer</p>
             {phase === 'waiting' ? (
               <p className="stat-value" style={{ color: 'var(--text-dim)', fontSize: '0.95rem' }}>
-                Round not started yet
+                Waiting for the next draw to begin...
               </p>
             ) : (
               <p className="stat-value">{countdownDisplay()}</p>
@@ -775,7 +761,7 @@ export default function Home() {
       <section>
         <h2>Eligibility Checker</h2>
         <div className="card">
-          <label htmlFor="wallet-check">Wallet Address</label>
+          <label htmlFor="wallet-check">Check if your wallet is in the draw</label>
           <input
             id="wallet-check"
             value={checkInput}
@@ -787,21 +773,21 @@ export default function Home() {
           {checkResult && (
             <div className="card result-card">
               <p className={`result-status ${checkResult.eligible ? 'status-good' : 'status-bad'}`}>
-                {checkResult.eligible ? '✅ Eligible' : '❌ Not Eligible'}
+                {checkResult.eligible ? '✅ Entered in Draw' : '❌ Not Eligible'}
               </p>
               {checkResult.eligible ? (
                 <div className="result-list">
                   <p>Wallet: {checkResult.wallet}</p>
-                  <p>
-                    Token Amount: {formatTokenAmount(checkResult.tokenAmount)} {TOKEN_TICKER}
-                  </p>
-                  <p>USD Value: {formatUsd(checkResult.usdValue)}</p>
+                  <p>Token Amount: {formatTokenAmount(checkResult.tokenAmount)} tokens</p>
                   <p>Entries: {checkResult.entries}</p>
                   <p>Minimum: {MINIMUM_ENTRY_LABEL}</p>
                   <p>Arena Status: {checkResult.arenaStatus}</p>
                 </div>
               ) : (
-                <p className="result-empty">{checkResult.message}</p>
+                <>
+                  <p className="result-empty">{checkResult.message}</p>
+                  <p className="result-empty">Arena Status: {checkResult.arenaStatus}</p>
+                </>
               )}
             </div>
           )}
