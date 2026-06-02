@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 const RPC_ENDPOINT =
   process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
-const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_PROGRAM_ID = '8t2phMFTJX6C3PpEehwdR4X8kP4X8S4cqyZBhRz9pump';
 
 const ENTRY_TIERS = [
   { minTokens: 500_000, entries: 3 },
