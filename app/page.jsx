@@ -13,7 +13,8 @@ const TOKEN_TICKER = '$TOKEN';
 // ─── SOLANA RPC CONFIG ────────────────────────────────────────────
 // Public Solana RPC endpoint — no API key required
 // You can swap this for a private RPC later if needed (e.g. Helius, Shyft, QuickNode)
-const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
+const SOLANA_RPC_ENDPOINT = 'https://rpc.ankr.com/solana';
+const RPC_ENDPOINTS = ['https://rpc.ankr.com/solana', 'https://solana-mainnet.g.alchemy.com/v2/demo', 'https://mainnet.helius-rpc.com/?api-key=demo'];
 
 // Paste your token mint address here once confirmed
 const TOKEN_MINT = 'FUhZDccwihYfDTpxd6VKdAdw4nintahN5TE3DnkXpump';
@@ -57,11 +58,26 @@ const getEntriesFromTokenAmount = (tokenAmount) => {
   return 0;
 };
 
-async function fetchHolders(mint, rpcEndpoint, decimals) {
-  // SPL Token program ID
+async function fetchHolders(mint, primaryEndpoint, decimals) {
+  const endpoints = [primaryEndpoint, ...RPC_ENDPOINTS.filter((endpoint) => endpoint !== primaryEndpoint)];
+
+  const endpointErrors = [];
+  for (const endpoint of endpoints) {
+    try {
+      const result = await fetchFromEndpoint(endpoint, mint, decimals);
+      return result;
+    } catch (error) {
+      endpointErrors.push(`${endpoint}: ${error.message}`);
+      console.warn(`RPC endpoint failed: ${endpoint}`, error.message);
+    }
+  }
+
+  throw new Error(`All RPC endpoints failed. ${endpointErrors.join(' | ')}`);
+}
+
+async function fetchFromEndpoint(rpcEndpoint, mint, decimals) {
   const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
-  // Fetch all token accounts for this mint using getProgramAccounts
   const response = await fetch(rpcEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -74,11 +90,11 @@ async function fetchHolders(mint, rpcEndpoint, decimals) {
         {
           encoding: 'jsonParsed',
           filters: [
-            { dataSize: 165 }, // standard SPL token account size
+            { dataSize: 165 },
             {
               memcmp: {
                 offset: 0,
-                bytes: mint, // filter by mint address
+                bytes: mint,
               },
             },
           ],
@@ -88,19 +104,20 @@ async function fetchHolders(mint, rpcEndpoint, decimals) {
   });
 
   if (!response.ok) {
-    throw new Error(`RPC request failed with status ${response.status}`);
+    throw new Error(`HTTP ${response.status} from ${rpcEndpoint}`);
   }
 
   const json = await response.json();
 
   if (json?.error) {
-    throw new Error(json.error.message || 'RPC request failed');
+    throw new Error(json.error.message || `RPC error from ${rpcEndpoint}`);
   }
 
-  if (!json.result) throw new Error('No result from RPC');
+  if (!json.result) {
+    throw new Error(`No result from ${rpcEndpoint}`);
+  }
 
   const accounts = json.result;
-
   const wallets = [];
 
   for (const account of accounts) {
@@ -114,7 +131,7 @@ async function fetchHolders(mint, rpcEndpoint, decimals) {
     const tokenAmount = Number(rawAmount) / Math.pow(10, decimals);
     const entries = getEntriesFromTokenAmount(tokenAmount);
 
-    if (entries === 0) continue; // below minimum threshold
+    if (entries === 0) continue;
 
     wallets.push({
       id: owner,
