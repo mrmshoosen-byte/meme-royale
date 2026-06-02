@@ -5,9 +5,140 @@
 const ROUND_ACTIVE = false;
 // ─────────────────────────────────────────────────────────────────
 
-import { useEffect, useRef, useState } from 'react';
+// ─── TOKEN CONFIG ─────────────────────────────────────────────────
+// Set your token ticker here when confirmed
+const TOKEN_TICKER = '$TOKEN';
+// ─────────────────────────────────────────────────────────────────
+
+// ─── HELIUS CONFIG ────────────────────────────────────────────────
+// Add your Helius API key to Vercel environment variables as:
+//   NEXT_PUBLIC_HELIUS_API_KEY=your_key_here
+// Get a free key at: https://helius.dev
+const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || '';
+
+// Paste your token mint address here once confirmed
+const TOKEN_MINT = 'PASTE_MINT_ADDRESS_HERE';
+
+// Token price in USD — update this or wire up a price feed later
+// This is used to calculate USD value of each holder's balance
+const TOKEN_PRICE_USD = 0; // e.g. 0.00042
+const TOKEN_DECIMALS = 6;
+
+// Refresh holders every N seconds (set to 0 to disable auto-refresh)
+const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
+// ─────────────────────────────────────────────────────────────────
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const MINIMUM_ENTRY_LABEL = '$100,000 USD value';
+const HELIUS_CONFIG_NOTICE = '⚙️ Configure TOKEN_MINT and NEXT_PUBLIC_HELIUS_API_KEY to load live holders.';
+const HELIUS_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
+
+// Entry tiers based on USD value of holdings
+// Tier 1: $100k+  → 1 entry (1 ball)
+// Tier 2: $500k+  → 2 entries (2 balls)
+// Tier 3: $1M+    → 3 entries (3 balls) — maximum
+const ENTRY_TIERS = [
+  { minUsd: 1_000_000, entries: 3 },
+  { minUsd: 500_000, entries: 2 },
+  { minUsd: 100_000, entries: 1 },
+];
 
 const shortenWallet = (wallet) => `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
+
+const formatTokenAmount = (value) =>
+  value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+
+const formatUsd = (value) =>
+  `${value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })} USD`;
+
+const getEntriesFromUsdValue = (usdValue) => {
+  for (const tier of ENTRY_TIERS) {
+    if (usdValue >= tier.minUsd) return tier.entries;
+  }
+  return 0;
+};
+
+async function fetchHolders(mint, apiKey, tokenPriceUsd) {
+  const endpoint = `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(apiKey)}`;
+  const walletBalances = new Map();
+  let cursor;
+
+  do {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'meme-royale',
+        method: 'getTokenAccounts',
+        params: {
+          mint,
+          limit: 1000,
+          ...(cursor ? { cursor } : {}),
+        },
+      }),
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Helius request failed with status ${response.status}`);
+    }
+
+    const payload = await response.json();
+
+    if (payload?.error) {
+      throw new Error(payload.error.message || 'Helius request failed');
+    }
+
+    const result = payload?.result ?? {};
+    const tokenAccounts = Array.isArray(result.token_accounts) ? result.token_accounts : [];
+
+    tokenAccounts.forEach((account) => {
+      const owner = account?.owner;
+      const rawAmount = Number(account?.amount || 0);
+
+      if (!owner || !Number.isFinite(rawAmount) || rawAmount <= 0) {
+        return;
+      }
+
+      const tokenAmount = rawAmount / 10 ** TOKEN_DECIMALS;
+      const previousAmount = walletBalances.get(owner) || 0;
+      walletBalances.set(owner, previousAmount + tokenAmount);
+    });
+
+    cursor = result?.cursor;
+  } while (cursor);
+
+  return Array.from(walletBalances.entries())
+    .map(([owner, tokenAmount]) => {
+      const usdValue = tokenAmount * tokenPriceUsd;
+      const entries = getEntriesFromUsdValue(usdValue);
+
+      if (entries <= 0) {
+        return null;
+      }
+
+      return {
+        id: owner,
+        wallet: owner,
+        tokenAmount,
+        usdValue,
+        entries,
+        status: 'alive',
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.usdValue - a.usdValue);
+}
 
 // ─── Arena Circle ─────────────────────────────────────────────────
 const CANVAS_SIZE = 500;
@@ -20,43 +151,44 @@ function getWalletColor(index) {
   return `hsl(${(index * 18) % 360}, 90%, 60%)`;
 }
 
-function ArenaCircle({ wallets, phase }) {
+function ArenaCircle({ wallets, phase, statusText, adminNotice }) {
   const canvasRef = useRef(null);
   const dotsRef = useRef([]);
   const frameRef = useRef(0);
-  const prevIdsRef = useRef('');
+  const prevWalletSignatureRef = useRef('');
   const phaseRef = useRef(phase);
   const walletsLenRef = useRef(0);
+  const statusTextRef = useRef(statusText);
   const [tooltip, setTooltip] = useState(null);
 
-  // Keep phaseRef current without restarting the animation loop
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
 
-  // Initialize or update dots whenever wallets array changes
+  useEffect(() => {
+    statusTextRef.current = statusText;
+  }, [statusText]);
+
   useEffect(() => {
     walletsLenRef.current = wallets.length;
-    const currentIds = wallets.map((w) => w.id).join(',');
+    const currentSignature = wallets.map((wallet) => `${wallet.id}:${wallet.entries}`).join(',');
 
-    if (currentIds !== prevIdsRef.current) {
-      // Full reinitialize (new round / wallets loaded)
-      prevIdsRef.current = currentIds;
+    if (currentSignature !== prevWalletSignatureRef.current) {
+      prevWalletSignatureRef.current = currentSignature;
       const newDots = [];
 
       if (wallets.length === 0) {
-        // Placeholder dots for empty state
         for (let i = 0; i < 6; i++) {
           const angle = Math.random() * Math.PI * 2;
           const r = Math.random() * (ARENA_RADIUS - DOT_RADIUS - 10);
           const speed = 0.3 + Math.random() * 0.4;
-          const va = Math.random() * Math.PI * 2;
+          const velocityAngle = Math.random() * Math.PI * 2;
           newDots.push({
             id: `ph-${i}`,
             x: CX + Math.cos(angle) * r,
             y: CY + Math.sin(angle) * r,
-            vx: Math.cos(va) * speed,
-            vy: Math.sin(va) * speed,
+            vx: Math.cos(velocityAngle) * speed,
+            vy: Math.sin(velocityAngle) * speed,
             color: '#555',
             alive: true,
             walletId: null,
@@ -66,20 +198,21 @@ function ArenaCircle({ wallets, phase }) {
           });
         }
       } else {
-        wallets.forEach((wallet, wi) => {
-          const color = getWalletColor(wi);
-          const livesCount = Math.max(1, wallet.lives || 1);
-          for (let li = 0; li < livesCount; li++) {
+        wallets.forEach((wallet, walletIndex) => {
+          const color = getWalletColor(walletIndex);
+          const entryCount = Math.max(1, wallet.entries || 1);
+
+          for (let entryIndex = 0; entryIndex < entryCount; entryIndex++) {
             const angle = Math.random() * Math.PI * 2;
             const r = Math.random() * (ARENA_RADIUS - DOT_RADIUS - 10);
             const speed = 0.4 + Math.random() * 0.8;
-            const va = Math.random() * Math.PI * 2;
+            const velocityAngle = Math.random() * Math.PI * 2;
             newDots.push({
-              id: `${wallet.id}-${li}`,
+              id: `${wallet.id}-${entryIndex}`,
               x: CX + Math.cos(angle) * r,
               y: CY + Math.sin(angle) * r,
-              vx: Math.cos(va) * speed,
-              vy: Math.sin(va) * speed,
+              vx: Math.cos(velocityAngle) * speed,
+              vy: Math.sin(velocityAngle) * speed,
               color,
               alive: wallet.status === 'alive',
               walletId: wallet.id,
@@ -92,37 +225,49 @@ function ArenaCircle({ wallets, phase }) {
       }
 
       dotsRef.current = newDots;
-    } else {
-      // Sync alive status only (eliminations during simulation)
-      const dots = dotsRef.current;
-      wallets.forEach((wallet) => {
-        if (wallet.status === 'eliminated') {
-          dots.forEach((dot) => {
-            if (dot.walletId === wallet.id && dot.alive) {
-              dot.alive = false;
-              dot.flashTimer = 10;
-            }
-          });
-        }
-      });
+      return;
     }
+
+    const walletMap = new Map(wallets.map((wallet) => [wallet.id, wallet]));
+    const dots = dotsRef.current;
+
+    dots.forEach((dot) => {
+      if (!dot.walletId) {
+        return;
+      }
+
+      const wallet = walletMap.get(dot.walletId);
+      if (wallet) {
+        dot.walletData = wallet;
+      }
+    });
+
+    wallets.forEach((wallet) => {
+      if (wallet.status === 'eliminated') {
+        dots.forEach((dot) => {
+          if (dot.walletId === wallet.id && dot.alive) {
+            dot.alive = false;
+            dot.flashTimer = 10;
+          }
+        });
+      }
+    });
   }, [wallets]);
 
-  // Single rAF loop — starts on mount, reads all state from refs
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const ctx = canvas.getContext('2d');
     let frameId;
 
     const loop = () => {
-      const p = phaseRef.current;
+      const currentPhase = phaseRef.current;
       const dots = dotsRef.current;
       frameRef.current++;
 
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-      // Arena background fill
       ctx.save();
       ctx.beginPath();
       ctx.arc(CX, CY, ARENA_RADIUS, 0, Math.PI * 2);
@@ -130,8 +275,7 @@ function ArenaCircle({ wallets, phase }) {
       ctx.fill();
       ctx.restore();
 
-      if (p !== 'winner') {
-        // Update dot positions
+      if (currentPhase !== 'winner') {
         dots.forEach((dot) => {
           if (!dot.alive) return;
           dot.x += dot.vx;
@@ -144,25 +288,26 @@ function ArenaCircle({ wallets, phase }) {
           if (dist + DOT_RADIUS > ARENA_RADIUS) {
             const nx = dx / dist;
             const ny = dy / dist;
-            const proj = dot.vx * nx + dot.vy * ny;
-            dot.vx -= 2 * proj * nx;
-            dot.vy -= 2 * proj * ny;
+            const projection = dot.vx * nx + dot.vy * ny;
+            dot.vx -= 2 * projection * nx;
+            dot.vy -= 2 * projection * ny;
             const overlap = dist + DOT_RADIUS - ARENA_RADIUS;
             dot.x -= nx * overlap;
             dot.y -= ny * overlap;
           }
         });
 
-        // Dot-dot collision response
         for (let i = 0; i < dots.length; i++) {
           for (let j = i + 1; j < dots.length; j++) {
             const a = dots[i];
             const b = dots[j];
             if (!a.alive || !b.alive) continue;
+
             const dx = b.x - a.x;
             const dy = b.y - a.y;
             const distSq = dx * dx + dy * dy;
             const minDist = DOT_RADIUS * 2;
+
             if (distSq < minDist * minDist && distSq > 0) {
               const dist = Math.sqrt(distSq);
               const nx = dx / dist;
@@ -172,22 +317,20 @@ function ArenaCircle({ wallets, phase }) {
               a.y -= ny * overlap * 0.5;
               b.x += nx * overlap * 0.5;
               b.y += ny * overlap * 0.5;
-              const aProj = a.vx * nx + a.vy * ny;
-              const bProj = b.vx * nx + b.vy * ny;
-              a.vx += (bProj - aProj) * nx;
-              a.vy += (bProj - aProj) * ny;
-              b.vx += (aProj - bProj) * nx;
-              b.vy += (aProj - bProj) * ny;
+              const aProjection = a.vx * nx + a.vy * ny;
+              const bProjection = b.vx * nx + b.vy * ny;
+              a.vx += (bProjection - aProjection) * nx;
+              a.vy += (bProjection - aProjection) * ny;
+              b.vx += (aProjection - bProjection) * nx;
+              b.vy += (aProjection - bProjection) * ny;
             }
           }
         }
       }
 
-      // Draw each dot
       dots.forEach((dot) => {
         ctx.save();
 
-        // Red flash ripple when eliminated
         if (dot.flashTimer > 0) {
           const alpha = dot.flashTimer / 10;
           ctx.beginPath();
@@ -202,8 +345,7 @@ function ArenaCircle({ wallets, phase }) {
           ctx.arc(dot.x, dot.y, DOT_RADIUS * 0.85, 0, Math.PI * 2);
           ctx.fillStyle = '#444';
           ctx.fill();
-        } else if (p === 'winner') {
-          // Pulsing gold glow for surviving dot(s)
+        } else if (currentPhase === 'winner') {
           const pulse = 0.7 + 0.3 * Math.sin(frameRef.current * 0.06);
           ctx.shadowColor = 'gold';
           ctx.shadowBlur = 20 * pulse;
@@ -222,14 +364,14 @@ function ArenaCircle({ wallets, phase }) {
         ctx.restore();
       });
 
-      // Empty state label
-      if (walletsLenRef.current === 0) {
+      const arenaMessage = statusTextRef.current || (walletsLenRef.current === 0 ? 'Waiting for holders...' : '');
+      if (arenaMessage) {
         ctx.save();
         ctx.fillStyle = '#666';
         ctx.font = '14px "Courier New", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('Waiting for holders...', CX, CY);
+        ctx.fillText(arenaMessage, CX, CY);
         ctx.restore();
       }
 
@@ -239,23 +381,25 @@ function ArenaCircle({ wallets, phase }) {
     frameId = requestAnimationFrame(loop);
 
     return () => cancelAnimationFrame(frameId);
-  }, []); // intentionally empty — all mutable state read via refs
+  }, []);
 
-  const handleMouseMove = (e) => {
+  const handleMouseMove = (event) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const rect = canvas.getBoundingClientRect();
     const scaleX = CANVAS_SIZE / rect.width;
     const scaleY = CANVAS_SIZE / rect.height;
-    const mx = (e.clientX - rect.left) * scaleX;
-    const my = (e.clientY - rect.top) * scaleY;
+    const mouseX = (event.clientX - rect.left) * scaleX;
+    const mouseY = (event.clientY - rect.top) * scaleY;
 
     const dots = dotsRef.current;
     let found = null;
+
     for (const dot of dots) {
       if (dot.placeholder) continue;
-      const dx = dot.x - mx;
-      const dy = dot.y - my;
+      const dx = dot.x - mouseX;
+      const dy = dot.y - mouseY;
       if (dx * dx + dy * dy <= (DOT_RADIUS + 4) * (DOT_RADIUS + 4)) {
         found = dot;
         break;
@@ -264,8 +408,8 @@ function ArenaCircle({ wallets, phase }) {
 
     if (found && found.walletData) {
       setTooltip({
-        x: e.clientX + 14,
-        y: e.clientY + 14,
+        x: event.clientX + 14,
+        y: event.clientY + 14,
         walletData: found.walletData,
         alive: found.alive,
       });
@@ -277,7 +421,7 @@ function ArenaCircle({ wallets, phase }) {
   return (
     <div className="arena-wrap">
       <h2 className="arena-title">THE ARENA</h2>
-      <p className="arena-subtitle">Each dot = one life. Hover to reveal wallet.</p>
+      <p className="arena-subtitle">Each dot = one entry ball. Hover to reveal wallet.</p>
       <div className="arena-canvas-container">
         <canvas
           ref={canvasRef}
@@ -290,16 +434,18 @@ function ArenaCircle({ wallets, phase }) {
       </div>
       {tooltip && (
         <div className="arena-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
-          <div className="arena-tooltip-wallet">
-            {shortenWallet(tooltip.walletData.wallet)}
+          <div className="arena-tooltip-wallet">{tooltip.walletData.wallet}</div>
+          <div>
+            {formatTokenAmount(tooltip.walletData.tokenAmount)} {TOKEN_TICKER}
           </div>
-          <div>{tooltip.walletData.holdings.toLocaleString()} $MRYL</div>
-          <div>❤️ x {tooltip.walletData.lives}</div>
+          <div>{formatUsd(tooltip.walletData.usdValue)}</div>
+          <div>Entries: {tooltip.walletData.entries}</div>
           <div className={tooltip.alive ? 'arena-tooltip-alive' : 'arena-tooltip-eliminated'}>
             {tooltip.alive ? 'ALIVE' : 'ELIMINATED'}
           </div>
         </div>
       )}
+      {adminNotice && <p className="arena-admin-notice">{adminNotice}</p>}
     </div>
   );
 }
@@ -311,6 +457,35 @@ const formatCountdown = (totalSeconds) => {
   return `${minutes}:${seconds}`;
 };
 
+const mergeWallets = (currentWallets, incomingWallets, preserveExisting) => {
+  if (!preserveExisting) {
+    return incomingWallets;
+  }
+
+  const incomingById = new Map(incomingWallets.map((wallet) => [wallet.id, wallet]));
+  const mergedWallets = currentWallets.map((wallet) => {
+    const refreshed = incomingById.get(wallet.id);
+    if (!refreshed) {
+      return wallet;
+    }
+
+    return {
+      ...wallet,
+      ...refreshed,
+      status: wallet.status,
+    };
+  });
+
+  const existingIds = new Set(currentWallets.map((wallet) => wallet.id));
+  incomingWallets.forEach((wallet) => {
+    if (!existingIds.has(wallet.id)) {
+      mergedWallets.push(wallet);
+    }
+  });
+
+  return mergedWallets;
+};
+
 export default function Home() {
   const [wallets, setWallets] = useState([]);
   const [phase, setPhase] = useState('waiting');
@@ -319,23 +494,26 @@ export default function Home() {
   const [countdown, setCountdown] = useState('60:00');
   const [checkInput, setCheckInput] = useState('');
   const [checkResult, setCheckResult] = useState(null);
+  const [holdersLoading, setHoldersLoading] = useState(false);
+  const [holdersError, setHoldersError] = useState('');
 
   const countdownRef = useRef(3600);
   const countdownTimerRef = useRef(null);
   const simulationRef = useRef(null);
-  // Always holds the latest wallets value so simulation useEffect can read it
-  // without listing wallets as a dependency (which would re-trigger the animation).
   const walletsRef = useRef([]);
+  const retryTimeoutRef = useRef(null);
+  const isFetchingRef = useRef(false);
 
-  const survivors = wallets.filter((w) => w.status === 'alive').length;
-  const jackpot = (wallets.length * 1000).toLocaleString();
+  const heliusConfigured = TOKEN_MINT !== 'PASTE_MINT_ADDRESS_HERE' && HELIUS_API_KEY !== '';
+  const survivors = wallets.filter((wallet) => wallet.status === 'alive').length;
+  const jackpot = (survivors * 1000).toLocaleString();
+  const arenaStatusText = holdersError || (holdersLoading && wallets.length === 0 ? 'Loading holders...' : '');
+  const adminNotice = heliusConfigured ? '' : HELIUS_CONFIG_NOTICE;
 
-  // Keep walletsRef in sync with the wallets state
   useEffect(() => {
     walletsRef.current = wallets;
   }, [wallets]);
 
-  // On mount: if ROUND_ACTIVE, automatically start the round countdown
   useEffect(() => {
     if (ROUND_ACTIVE) {
       countdownRef.current = 3600;
@@ -344,7 +522,61 @@ export default function Home() {
     }
   }, []);
 
-  // Countdown ticker — only active in 'live' phase
+  const loadHolders = useCallback(
+    async ({ preserveExisting = false } = {}) => {
+      if (!heliusConfigured || isFetchingRef.current) {
+        return;
+      }
+
+      isFetchingRef.current = true;
+      setHoldersLoading(true);
+      setHoldersError('');
+      clearTimeout(retryTimeoutRef.current);
+
+      try {
+        const liveWallets = await fetchHolders(TOKEN_MINT, HELIUS_API_KEY, TOKEN_PRICE_USD);
+        setWallets((currentWallets) => mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0));
+      } catch (error) {
+        console.error('Failed to load holders from Helius', error);
+        setHoldersError(HELIUS_RETRY_MESSAGE);
+        retryTimeoutRef.current = setTimeout(() => {
+          loadHolders({ preserveExisting: true });
+        }, 30_000);
+      } finally {
+        setHoldersLoading(false);
+        isFetchingRef.current = false;
+      }
+    },
+    [heliusConfigured],
+  );
+
+  useEffect(() => {
+    clearTimeout(retryTimeoutRef.current);
+
+    if (!heliusConfigured) {
+      setWallets([]);
+      setHoldersLoading(false);
+      setHoldersError('');
+      return;
+    }
+
+    loadHolders();
+
+    return () => clearTimeout(retryTimeoutRef.current);
+  }, [heliusConfigured, loadHolders]);
+
+  useEffect(() => {
+    if (!heliusConfigured || HOLDER_REFRESH_INTERVAL_SECONDS <= 0 || !['waiting', 'live'].includes(phase)) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      loadHolders({ preserveExisting: true });
+    }, HOLDER_REFRESH_INTERVAL_SECONDS * 1000);
+
+    return () => clearInterval(intervalId);
+  }, [heliusConfigured, loadHolders, phase]);
+
   useEffect(() => {
     if (phase !== 'live') return;
 
@@ -363,28 +595,22 @@ export default function Home() {
     return () => clearInterval(countdownTimerRef.current);
   }, [phase]);
 
-  // Simulation animation — triggers when phase becomes 'simulating'
   useEffect(() => {
     if (phase !== 'simulating') return;
 
-    // Read the current wallets via ref to avoid a stale closure without
-    // listing wallets as a dependency (which would re-run the animation
-    // on every wallet update during the simulation itself).
-    const snapshot = walletsRef.current.filter((w) => w.status === 'alive');
+    const snapshot = walletsRef.current.filter((wallet) => wallet.status === 'alive');
 
     if (snapshot.length === 0) {
       setPhase('winner');
       return;
     }
 
-    // Fisher-Yates shuffle to build elimination order
     const shuffled = [...snapshot];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
 
-    // Last wallet in shuffled order is the winner; everyone else is eliminated
     const winnerWallet = shuffled[shuffled.length - 1];
     const eliminationOrder = shuffled.slice(0, -1);
 
@@ -399,7 +625,9 @@ export default function Home() {
       }
 
       const target = eliminationOrder[step];
-      setWallets((prev) => prev.map((w) => (w.id === target.id ? { ...w, status: 'eliminated' } : w)));
+      setWallets((currentWallets) =>
+        currentWallets.map((wallet) => (wallet.id === target.id ? { ...wallet, status: 'eliminated' } : wallet)),
+      );
       setEliminationMessage(`💀 Wallet ${shortenWallet(target.wallet)} has been knocked out!`);
       step++;
     }, 300);
@@ -410,23 +638,37 @@ export default function Home() {
   const resetRound = () => {
     clearInterval(countdownTimerRef.current);
     clearInterval(simulationRef.current);
+    clearTimeout(retryTimeoutRef.current);
     setWallets([]);
     setPhase('waiting');
     setWinner(null);
     setEliminationMessage(null);
+    setCheckResult(null);
     countdownRef.current = 3600;
     setCountdown('60:00');
+
+    if (heliusConfigured) {
+      loadHolders();
+    }
   };
 
   const runEligibilityCheck = () => {
     const query = checkInput.trim().toLowerCase();
-    const match = wallets.find((wallet) => wallet.wallet.toLowerCase().includes(query) && query.length > 0);
+
+    if (!query) {
+      setCheckResult(null);
+      return;
+    }
+
+    const match = wallets.find((wallet) => wallet.wallet.toLowerCase() === query);
 
     if (match) {
       setCheckResult({
         eligible: true,
-        balance: match.holdings,
-        lives: match.lives,
+        wallet: match.wallet,
+        tokenAmount: match.tokenAmount,
+        usdValue: match.usdValue,
+        entries: match.entries,
         arenaStatus: match.status === 'alive' ? 'In Arena' : 'Eliminated',
       });
       return;
@@ -434,9 +676,7 @@ export default function Home() {
 
     setCheckResult({
       eligible: false,
-      balance: 0,
-      lives: 0,
-      arenaStatus: 'Not Entered',
+      message: "Wallet not found in arena. You may not hold enough or the round hasn't loaded yet.",
     });
   };
 
@@ -455,7 +695,6 @@ export default function Home() {
 
   return (
     <main>
-      {/* Hero */}
       <section className="hero">
         <div className="hero-badge">🏆 SEASON 1 · {heroBadgeLabel()}</div>
         <h1 className="hero-title">MEME ROYALE</h1>
@@ -465,25 +704,23 @@ export default function Home() {
           the jackpot.
         </p>
         <div className="hero-pills">
-          <span>&quot;Every holder enters the arena.&quot;</span>
+          <span>&quot;Every eligible holder enters the arena.&quot;</span>
           <span>&quot;One wallet falls every hour.&quot;</span>
           <span>&quot;Final wallet wins the jackpot.&quot;</span>
           <span>&quot;Survive until the end.&quot;</span>
-          <span>&quot;The longer you hold, the longer you stay in the game.&quot;</span>
+          <span>&quot;More USD value unlocks more entries.&quot;</span>
         </div>
       </section>
 
-      {/* Simulating banner */}
-      {phase === 'simulating' && (
-        <section className="simulating-banner">⚡ DRAWING WINNER... WALLETS FALLING ⚡</section>
-      )}
+      {phase === 'simulating' && <section className="simulating-banner">⚡ DRAWING WINNER... WALLETS FALLING ⚡</section>}
 
-      {/* Winner banner */}
       {phase === 'winner' && winner && (
         <section className="winner-banner">
           <h2 className="winner-title">🏆 WINNER THIS ROUND 🏆</h2>
           <p className="winner-wallet">{winner.wallet}</p>
-          <p className="winner-jackpot">JACKPOT: {jackpot} $MRYL</p>
+          <p className="winner-jackpot">
+            JACKPOT: {jackpot} {TOKEN_TICKER}
+          </p>
           <p className="winner-next">Next Round Starting Soon...</p>
           <button className="reset-button" onClick={resetRound}>
             Reset Round
@@ -491,28 +728,32 @@ export default function Home() {
         </section>
       )}
 
-      {/* Knockout message during simulation */}
       {phase === 'simulating' && eliminationMessage && (
         <div className="alert-box" style={{ margin: '1rem 0' }}>
           {eliminationMessage}
         </div>
       )}
 
-      {/* Live Arena Stats */}
       <section>
         <h2>Live Arena Stats</h2>
         <div className="stats-grid">
           <div className="card">
             <p className="stat-label">🏆 Current Jackpot</p>
-            <p className="jackpot-value">{jackpot} $MRYL</p>
+            {holdersLoading && wallets.length === 0 ? (
+              <p className="stat-value stat-status">Loading holders...</p>
+            ) : (
+              <p className="jackpot-value">
+                {jackpot} {TOKEN_TICKER}
+              </p>
+            )}
           </div>
           <div className="card">
             <p className="stat-label">👥 Holders Entered</p>
-            <p className="stat-value">{wallets.length}</p>
+            <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading holders...' : wallets.length}</p>
           </div>
           <div className="card">
             <p className="stat-label">💀 Survivors Remaining</p>
-            <p className="stat-value">{survivors}</p>
+            <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading holders...' : survivors}</p>
           </div>
           <div className="card">
             <p className="stat-label">⏱ Round Timer</p>
@@ -526,12 +767,11 @@ export default function Home() {
           </div>
           <div className="card">
             <p className="stat-label">🪙 Minimum Holding</p>
-            <p className="stat-value">10,000 $MRYL</p>
+            <p className="stat-value">{MINIMUM_ENTRY_LABEL}</p>
           </div>
         </div>
       </section>
 
-      {/* Eligibility Checker */}
       <section>
         <h2>Eligibility Checker</h2>
         <div className="card">
@@ -549,26 +789,27 @@ export default function Home() {
               <p className={`result-status ${checkResult.eligible ? 'status-good' : 'status-bad'}`}>
                 {checkResult.eligible ? '✅ Eligible' : '❌ Not Eligible'}
               </p>
-              <div className="result-list">
-                <p>Wallet Balance: {checkResult.balance.toLocaleString()} $MRYL</p>
-                <p>Lives Remaining: {checkResult.lives}</p>
-                <p>
-                  Arena Status:{' '}
-                  {checkResult.eligible
-                    ? checkResult.arenaStatus === 'Eliminated'
-                      ? 'Eliminated'
-                      : 'In Arena'
-                    : 'Not Entered'}
-                </p>
-              </div>
+              {checkResult.eligible ? (
+                <div className="result-list">
+                  <p>Wallet: {checkResult.wallet}</p>
+                  <p>
+                    Token Amount: {formatTokenAmount(checkResult.tokenAmount)} {TOKEN_TICKER}
+                  </p>
+                  <p>USD Value: {formatUsd(checkResult.usdValue)}</p>
+                  <p>Entries: {checkResult.entries}</p>
+                  <p>Minimum: {MINIMUM_ENTRY_LABEL}</p>
+                  <p>Arena Status: {checkResult.arenaStatus}</p>
+                </div>
+              ) : (
+                <p className="result-empty">{checkResult.message}</p>
+              )}
             </div>
           )}
         </div>
       </section>
 
-      {/* Arena Circle */}
       <section>
-        <ArenaCircle wallets={wallets} phase={phase} />
+        <ArenaCircle wallets={wallets} phase={phase} statusText={arenaStatusText} adminNotice={adminNotice} />
       </section>
     </main>
   );
