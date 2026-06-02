@@ -10,10 +10,17 @@ const ROUND_ACTIVE = true;
 const TOKEN_TICKER = '$TOKEN';
 // ─────────────────────────────────────────────────────────────────
 
-// Paste your token mint address here once confirmed
+// ─── JACKPOT CONFIG ───────────────────────────────────────────────
+const JACKPOT_DISPLAY = '$12 USD';
+// ─────────────────────────────────────────────────────────────────
+
+// ─── SOLANA RPC CONFIG ────────────────────────────────────────────
+const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
+
 const TOKEN_MINT = 'FUhZDccwihYfDTpxd6VKdAdw4nintahN5TE3DnkXpump';
 
-// Refresh holders every N seconds while round is waiting or live (0 = disabled)
+const TOKEN_DECIMALS = 6;
+
 const HOLDER_REFRESH_INTERVAL_SECONDS = 60;
 // ─────────────────────────────────────────────────────────────────
 
@@ -22,10 +29,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 const MINIMUM_ENTRY_LABEL = '10,000 Tokens';
 const HOLDER_RETRY_MESSAGE = 'Failed to load holders. Retrying...';
 
-// Entry tiers based on raw token holdings
-// Tier 1: 10k+    → 1 entry (1 ball)
-// Tier 2: 100k+   → 2 entries (2 balls)
-// Tier 3: 500k+   → 3 entries (3 balls) — maximum
 const ENTRY_TIERS = [
   { minTokens: 500_000, entries: 3 },
   { minTokens: 100_000, entries: 2 },
@@ -158,14 +161,9 @@ function ArenaCircle({ wallets, phase, statusText }) {
     const dots = dotsRef.current;
 
     dots.forEach((dot) => {
-      if (!dot.walletId) {
-        return;
-      }
-
+      if (!dot.walletId) return;
       const wallet = walletMap.get(dot.walletId);
-      if (wallet) {
-        dot.walletData = wallet;
-      }
+      if (wallet) dot.walletData = wallet;
     });
 
     wallets.forEach((wallet) => {
@@ -392,22 +390,13 @@ const mergeWallets = (currentWallets, incomingWallets, preserveExisting) => {
   const incomingById = new Map(incomingWallets.map((wallet) => [wallet.id, wallet]));
   const mergedWallets = currentWallets.map((wallet) => {
     const refreshed = incomingById.get(wallet.id);
-    if (!refreshed) {
-      return wallet;
-    }
-
-    return {
-      ...wallet,
-      ...refreshed,
-      status: wallet.status,
-    };
+    if (!refreshed) return wallet;
+    return { ...wallet, ...refreshed, status: wallet.status };
   });
 
   const existingIds = new Set(currentWallets.map((wallet) => wallet.id));
   incomingWallets.forEach((wallet) => {
-    if (!existingIds.has(wallet.id)) {
-      mergedWallets.push(wallet);
-    }
+    if (!existingIds.has(wallet.id)) mergedWallets.push(wallet);
   });
 
   return mergedWallets;
@@ -433,7 +422,6 @@ export default function Home() {
 
   const holderFetchConfigured = TOKEN_MINT !== 'PASTE_MINT_ADDRESS_HERE';
   const survivors = wallets.filter((wallet) => wallet.status === 'alive').length;
-  const jackpot = (survivors * 1000).toLocaleString();
   const arenaStatusText = holdersError || (holdersLoading && wallets.length === 0 ? 'Loading holders...' : '');
 
   useEffect(() => {
@@ -450,9 +438,7 @@ export default function Home() {
 
   const loadHolders = useCallback(
     async ({ preserveExisting = false } = {}) => {
-      if (!holderFetchConfigured || isFetchingRef.current) {
-        return;
-      }
+      if (!holderFetchConfigured || isFetchingRef.current) return;
 
       isFetchingRef.current = true;
       setHoldersLoading(true);
@@ -463,7 +449,7 @@ export default function Home() {
         const liveWallets = await fetchHolders(TOKEN_MINT);
         setWallets((currentWallets) => mergeWallets(currentWallets, liveWallets, preserveExisting && currentWallets.length > 0));
       } catch (error) {
-        console.error('Failed to load holders from Solana RPC', error);
+        console.error('Failed to load holders', error);
         setHoldersError(HOLDER_RETRY_MESSAGE);
         retryTimeoutRef.current = setTimeout(() => {
           loadHolders({ preserveExisting: true });
@@ -492,9 +478,7 @@ export default function Home() {
   }, [holderFetchConfigured, loadHolders]);
 
   useEffect(() => {
-    if (!holderFetchConfigured || HOLDER_REFRESH_INTERVAL_SECONDS <= 0 || !['waiting', 'live'].includes(phase)) {
-      return;
-    }
+    if (!holderFetchConfigured || HOLDER_REFRESH_INTERVAL_SECONDS <= 0 || !['waiting', 'live'].includes(phase)) return;
 
     const intervalId = setInterval(() => {
       loadHolders({ preserveExisting: true });
@@ -573,9 +557,7 @@ export default function Home() {
     countdownRef.current = 3600;
     setCountdown('60:00');
 
-    if (holderFetchConfigured) {
-      loadHolders();
-    }
+    if (holderFetchConfigured) loadHolders();
   };
 
   const runEligibilityCheck = () => {
@@ -644,9 +626,7 @@ export default function Home() {
         <section className="winner-banner">
           <h2 className="winner-title">🏆 WINNER THIS ROUND 🏆</h2>
           <p className="winner-wallet">{winner.wallet}</p>
-          <p className="winner-jackpot">
-            JACKPOT: {jackpot} {TOKEN_TICKER}
-          </p>
+          <p className="winner-jackpot">JACKPOT: {JACKPOT_DISPLAY}</p>
           <p className="winner-next">Jackpot claimed. Next draw starting soon...</p>
           <button className="reset-button" onClick={resetRound}>
             Reset Round
@@ -665,21 +645,15 @@ export default function Home() {
         <div className="stats-grid">
           <div className="card">
             <p className="stat-label">🏆 Current Jackpot</p>
-            {holdersLoading && wallets.length === 0 ? (
-              <p className="stat-value stat-status">Loading holders...</p>
-            ) : (
-              <p className="jackpot-value">
-                {jackpot} {TOKEN_TICKER}
-              </p>
-            )}
+            <p className="jackpot-value">{JACKPOT_DISPLAY}</p>
           </div>
           <div className="card">
             <p className="stat-label">👥 Wallets Entered</p>
-            <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading holders...' : wallets.length}</p>
+            <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading...' : wallets.length}</p>
           </div>
           <div className="card">
             <p className="stat-label">🎯 Still In Draw</p>
-            <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading holders...' : survivors}</p>
+            <p className="stat-value stat-status">{holdersLoading && wallets.length === 0 ? 'Loading...' : survivors}</p>
           </div>
           <div className="card">
             <p className="stat-label">⏱ Round Timer</p>
